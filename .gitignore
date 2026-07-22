@@ -1,0 +1,39 @@
+# 编译中间文件
+*.o
+*.d
+*.crf
+*.dep
+*.lst
+*.su
+*.cyclo
+
+# 编译输出文件
+*.axf
+*.elf
+*.hex
+*.bin
+*.map
+*.out
+*.srec
+*.ihx
+
+# Keil 生成文件
+Objects/
+Listings/
+*.lnp
+*.htm
+*.uvguix.*
+*.uvoptx
+*.uvopt
+*.bak
+
+# CubeIDE / Eclipse
+Debug/
+Release/
+.settings/
+
+# 临时文件
+*.tmp
+*.log
+*.save
+*.orig
