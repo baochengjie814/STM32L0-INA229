@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32L031xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32L0xx_HAL_Driver/Inc;../Drivers/STM32L0xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32L0xx/Include;../Drivers/CMSIS/Include;..\USER\SYSTEM;..\USER\LcdControl;..\USER\INA229</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32L0xx_HAL_Driver/Inc;../Drivers/STM32L0xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32L0xx/Include;../Drivers/CMSIS/Include;..\USER\SYSTEM;..\USER\LcdControl;..\USER\INA229;..\USER\GlobalControl</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -1046,6 +1046,21 @@
               <FileName>soft_spi.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\USER\INA229\soft_spi.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Global</GroupName>
+          <Files>
+            <File>
+              <FileName>global_control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\USER\GlobalControl\global_control.c</FilePath>
+            </File>
+            <File>
+              <FileName>global_control.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\USER\GlobalControl\global_control.h</FilePath>
             </File>
           </Files>
         </Group>

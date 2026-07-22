@@ -37,12 +37,12 @@
 
 ////	
 
-//#include "lcd_drv.h"
-//#include "lcd_mid.h"
+#include "lcd_drv.h"
+#include "lcd_mid.h"
 
 //#include "key_drv.h"
 
-//#include "global_control.h"
+#include "global_control.h"
 
 //#include "led_task.h"
 //#include "key_task.h"
