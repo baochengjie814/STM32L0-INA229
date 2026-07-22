@@ -1,260 +1,260 @@
-/**
- * @file    soft_spi.c
- * @brief   Èí¼þÄ£Äâ SPI ×ÜÏßÇý¶¯ÊµÏÖ
- *
- * @author  (ÄãµÄÃû×Ö)
- * @date    (ÈÕÆÚ)
- *
- * @note    Í¨¹ý HAL GPIO º¯Êý¿ØÖÆÒý½ÅµçÆ½, Ä£Äâ SPI Ê±Ðò¡£
- *          Ö§³Ö CPOL/CPHA ËÄÖÖÄ£Ê½ (Mode 0/1/2/3)¡£
- *
- *   SPI Ã¿Î»´«ÊäÁ÷³Ì (Mode 1, CPOL=0, CPHA=1):
- *     1. MOSI Êä³öÊý¾ÝÎ»
- *     2. ÑÓÊ± t_setup
- *     3. SCK ÉÏÉýÑØ (ÒÆÎ»±ßÑØ, INA229 Ëø´æ MOSI)
- *     4. ÑÓÊ± t_hold
- *     5. ¶ÁÈ¡ MISO µçÆ½
- *     6. SCK ÏÂ½µÑØ (²ÉÑù±ßÑØ)
- *     7. ÑÓÊ±
- *
- *   ×¢Òâ: ²»Í¬ SPI Ä£Ê½ÏÂµÄ EDGE_SHIFT / EDGE_SAMPLE ¶¨Òå²»Í¬,
- *         µ«´úÂë½á¹¹Í³Ò»Í¨¹ýÌõ¼þ±àÒë´¦Àí¡£
- */
-
-#include "soft_spi.h"
-#include "system.h"   /* SystemCoreClock */
-
-/*---------------------------------------------------------------------------
- * ÄÚ²¿ºê (½ö±¾ÎÄ¼þ¿É¼û)
- *
- *   ½« HAL GPIO ²Ù×÷·â×°Îª¼ò½àºê, Ìá¸ß´úÂë¿É¶ÁÐÔ¡£
- *   ×¢Òâ: SCLK_H/SCLK_L µÄµçÆ½º¬ÒåÈ¡¾öÓÚ CPOL ÅäÖÃ:
- *     CPOL=0: SCLK_H=SET (¸ßÓÐÐ§), SCLK_L=RESET (µÍÓÐÐ§)
- *     CPOL=1: SCLK_H=RESET, SCLK_L=SET (¼«ÐÔ·´×ª)
- *---------------------------------------------------------------------------*/
-
-/** @brief MOSI Êä³ö¸ßµçÆ½ */
-#define MOSI_H() HAL_GPIO_WritePin(SOFT_SPI_MOSI_PORT, SOFT_SPI_MOSI_PIN, GPIO_PIN_SET)
-/** @brief MOSI Êä³öµÍµçÆ½ */
-#define MOSI_L() HAL_GPIO_WritePin(SOFT_SPI_MOSI_PORT, SOFT_SPI_MOSI_PIN, GPIO_PIN_RESET)
-/** @brief ¶ÁÈ¡ MISO Òý½ÅµçÆ½ (1=¸ß, 0=µÍ) */
-#define MISO_R() HAL_GPIO_ReadPin(SOFT_SPI_MISO_PORT, SOFT_SPI_MISO_PIN)
-
-/*
- * SCK µçÆ½¶¨Òå: ¸ù¾Ý CPOL ¾ö¶¨ "¸ß" "µÍ" ¶ÔÓ¦µÄ GPIO ²Ù×÷
- *   CPOL=0: ¿ÕÏÐµÍ ¡ú SCLK_H=ÖÃ¸ß, SCLK_L=ÖÃµÍ
- *   CPOL=1: ¿ÕÏÐ¸ß ¡ú SCLK_H=ÖÃµÍ, SCLK_L=ÖÃ¸ß (·´×ª)
- */
-#if SOFT_SPI_CPOL == 0
-  #define SCLK_H() HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_SET)
-  #define SCLK_L() HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_RESET)
-#else
-  #define SCLK_H() HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_RESET)
-  #define SCLK_L() HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_SET)
-#endif
-
-/*
- * ¸ù¾Ý CPOL/CPHA ×éºÏ¶¨ÒåÒÆÎ»±ßÑØºÍ²ÉÑù±ßÑØ:
- *
- *   Mode 0 (CPOL=0, CPHA=0): ¿ÕÏÐµÍ, ÉÏÉýÑØ²ÉÑù, ÏÂ½µÑØÒÆÎ»
- *     ¡ú ÏÈ²ÉÑù(SCK¡ü), ºóÒÆÎ»(SCK¡ý)
- *     ¡ú MISO ÔÚÉÏÉýÑØ±»´ÓÉè±¸¸üÐÂ, Ö÷Éè±¸ÔÚÉÏÉýÑØºó¶ÁÈ¡
- *
- *   Mode 1 (CPOL=0, CPHA=1): ¿ÕÏÐµÍ, ÏÂ½µÑØ²ÉÑù, ÉÏÉýÑØÒÆÎ»
- *     ¡ú ÏÈÒÆÎ»(SCK¡ü), ºó²ÉÑù(SCK¡ý)
- *     ¡ú MISO ÔÚÏÂ½µÑØ±»´ÓÉè±¸¸üÐÂ, Ö÷Éè±¸ÔÚÏÂ½µÑØÇ°¶ÁÈ¡
- *     ¡ú INA229 Ê¹ÓÃ´ËÄ£Ê½!
- *
- *   Mode 2 (CPOL=1, CPHA=0): ¿ÕÏÐ¸ß, ÏÂ½µÑØ²ÉÑù, ÉÏÉýÑØÒÆÎ»
- *   Mode 3 (CPOL=1, CPHA=1): ¿ÕÏÐ¸ß, ÉÏÉýÑØ²ÉÑù, ÏÂ½µÑØÒÆÎ»
- */
-#if   (SOFT_SPI_CPOL == 0 && SOFT_SPI_CPHA == 0)   /* Mode 0 */
-  #define EDGE_SHIFT()   SCLK_L()    /**< ÒÆÎ»±ßÑØ = ÏÂ½µÑØ */
-  #define EDGE_SAMPLE()  SCLK_H()    /**< ²ÉÑù±ßÑØ = ÉÏÉýÑØ */
-  #define READ_ON_RISING  1          /**< MISO ÔÚÉÏÉýÑØºó¶ÁÈ¡ */
-#elif (SOFT_SPI_CPOL == 0 && SOFT_SPI_CPHA == 1)   /* Mode 1 ¡û INA229 */
-  #define EDGE_SHIFT()   SCLK_H()
-  #define EDGE_SAMPLE()  SCLK_L()
-  #define READ_ON_RISING  0          /**< MISO ÔÚÏÂ½µÑØºó¶ÁÈ¡ */
-#elif (SOFT_SPI_CPOL == 1 && SOFT_SPI_CPHA == 0)   /* Mode 2 */
-  #define EDGE_SHIFT()   SCLK_H()
-  #define EDGE_SAMPLE()  SCLK_L()
-  #define READ_ON_RISING  0
-#elif (SOFT_SPI_CPOL == 1 && SOFT_SPI_CPHA == 1)   /* Mode 3 */
-  #define EDGE_SHIFT()   SCLK_L()
-  #define EDGE_SAMPLE()  SCLK_H()
-  #define READ_ON_RISING  1
-#endif
-
-/*---------------------------------------------------------------------------*/
-
-/**
- * @brief  Î¢Ãë¼¶´ÖÂÔÑÓÊ± (»ùÓÚ CPU ¿ÕÖ¸ÁîÑ­»·)
- *
- *   ¼ÆÊýÖµ = us ¡Á SystemCoreClock / 8000000
- *   ÆäÖÐ 8000000 ÊÇ¾­ÑéÏµÊý, Ô¼µÈÓÚÃ¿Î¢ÃëµÄ NOP Ñ­»·´ÎÊý,
- *   Ðè¸ù¾ÝÊµ¼Ê MCU ÆµÂÊÎ¢µ÷¡£
- *
- *   @note  ´ËÑÓÊ±¾«¶È½ÏµÍ, ½öÓÃÓÚ SPI Ê±Ðò¿ØÖÆ, ²»ÊÊÓÃÓÚ¾«È·¶¨Ê±¡£
- *          ÈçÓÐÓ²¼þ¶¨Ê±Æ÷, ½¨ÒéÌæ»»Îª¶¨Ê±Æ÷ÑÓÊ±¡£
- *
- * @param  us ÑÓÊ±Î¢ÃëÊý
- */
-void Soft_SPI_DelayUs(uint32_t us)
-{
-    /*
-     * 8000000 Îª¾­ÑéÖµ, Ê¹µÃ count ½üËÆµÈÓÚ us Î¢Ãë¶ÔÓ¦µÄ NOP Ñ­»·´ÎÊý¡£
-     * ÀýÈç SystemCoreClock=72MHz ¡ú us=1 ¡ú count=9 ¡ú Ô¼ 1¦Ìs
-     * Êµ¼ÊÑÓÊ±ÐèÓÃÊ¾²¨Æ÷Ð£×¼¡£
-     */
-    uint32_t count = us * (SystemCoreClock / 8000000);
-    while (count--) {
-        __NOP();  /* µ¥ÖÜÆÚ¿Õ²Ù×÷ */
-    }
-}
-
-/**
- * @brief  Èí¼þ SPI ³õÊ¼»¯
- *
- *   ½«ËùÓÐ SPI Òý½ÅÖÃÎª³õÊ¼×´Ì¬:
- *     - SCK  = ¿ÕÏÐµçÆ½ (CPOL ¾ö¶¨)
- *     - MOSI = µÍ
- *     - CS   = ¸ß (²»Ñ¡ÖÐ´ÓÉè±¸)
- *
- *   @note  ÒÔÏÂ±»×¢ÊÍµôµÄ HAL GPIO ³õÊ¼»¯´úÂë½ö¹©²Î¿¼,
- *          Êµ¼Ê GPIO ³õÊ¼»¯ÇëÔÚ main.c »òÆäËû³õÊ¼»¯º¯ÊýÖÐÍê³É,
- *          »òÈ¡Ïû×¢ÊÍÒÔÏÂ´úÂë²¢È·±£ __HAL_RCC_xxx_CLK_ENABLE ÕýÈ·¡£
- */
-void Soft_SPI_Init(void)
-{
-    /*
-     * ====== ¿ÉÑ¡: HAL GPIO ³õÊ¼»¯ (Èô²»ÔÚ´Ë´¦³õÊ¼»¯, ÇëÔÚÍâ²¿Íê³É) ======
-     *
-     *   Èç¹û GPIO ÒÑÔÚ CubeMX Éú³ÉµÄ MX_GPIO_Init() ÖÐ³õÊ¼»¯,
-     *   ÒÔÏÂ´úÂëÎÞÐèÈ¡Ïû×¢ÊÍ¡£
-     *
-     *   È¡Ïû×¢ÊÍÇ°ÇëÈ·ÈÏ:
-     *     - RCC Ê±ÖÓÒÑÊ¹ÄÜ
-     *     - Òý½ÅÄ£Ê½ÕýÈ· (SCK/MOSI/CS=ÍÆÍìÊä³ö, MISO=¸¡¿ÕÊäÈë)
-     *
-     *   GPIO_InitTypeDef g = {0};
-     *   __HAL_RCC_GPIOA_CLK_ENABLE();
-     *   __HAL_RCC_GPIOB_CLK_ENABLE();
-     *
-     *   g.Pin   = SOFT_SPI_SCLK_PIN;
-     *   g.Mode  = GPIO_MODE_OUTPUT_PP;
-     *   g.Pull  = GPIO_NOPULL;
-     *   g.Speed = GPIO_SPEED_FREQ_HIGH;
-     *   HAL_GPIO_Init(SOFT_SPI_SCLK_PORT, &g);
-     *
-     *   g.Pin = SOFT_SPI_MOSI_PIN;
-     *   HAL_GPIO_Init(SOFT_SPI_MOSI_PORT, &g);
-     *
-     *   g.Pin  = SOFT_SPI_MISO_PIN;
-     *   g.Mode = GPIO_MODE_INPUT;
-     *   HAL_GPIO_Init(SOFT_SPI_MISO_PORT, &g);
-     *
-     *   g.Pin  = SOFT_SPI_CS_PIN;
-     *   g.Mode = GPIO_MODE_OUTPUT_PP;
-     *   HAL_GPIO_Init(SOFT_SPI_CS_PORT, &g);
-     */
-
-    /* ÉèÖÃ³õÊ¼µçÆ½: SCK ¿ÕÏÐ, MOSI µÍ, CS ¸ß (²»Ñ¡ÖÐ) */
-    SCLK_L();           /* Ê±ÖÓÖÃ¿ÕÏÐµçÆ½ */
-    MOSI_L();           /* MOSI ÖÃµÍ     */
-    Soft_SPI_CS_High(); /* CS À­¸ß (²»Ñ¡ÖÐ) */
-    Soft_SPI_DelayUs(10); /* ÎÈ¶¨ÑÓÊ± */
-}
-
-/**
- * @brief  À­µÍÆ¬Ñ¡ÐÅºÅ (CS=0), ¿ªÊ¼ SPI Í¨ÐÅ
- * @note   À­µÍºóÑÓÊ± 1¦Ìs ÒÔÂú×ã´ÓÉè±¸µÄ CS ½¨Á¢Ê±¼ä (t_CSSC)
- */
-void Soft_SPI_CS_Low(void)
-{
-    HAL_GPIO_WritePin(SOFT_SPI_CS_PORT, SOFT_SPI_CS_PIN, GPIO_PIN_RESET);
-    Soft_SPI_DelayUs(1);  /* CS ½¨Á¢Ê±¼ä */
-}
-
-/**
- * @brief  À­¸ßÆ¬Ñ¡ÐÅºÅ (CS=1), ½áÊø SPI Í¨ÐÅ
- * @note   À­¸ßÇ°ÑÓÊ± 1¦Ìs ÒÔÂú×ã´ÓÉè±¸µÄÊý¾Ý±£³ÖÊ±¼ä (t_CSH),
- *         À­¸ßºóÑÓÊ± 1¦Ìs ÒÔÂú×ã CS ¸ßµçÆ½×îÐ¡¿í¶È¡£
- */
-void Soft_SPI_CS_High(void)
-{
-    Soft_SPI_DelayUs(1);  /* CS ±£³ÖÊ±¼ä (×îºóÒ»Î»Êý¾ÝÎÈ¶¨) */
-    HAL_GPIO_WritePin(SOFT_SPI_CS_PORT, SOFT_SPI_CS_PIN, GPIO_PIN_SET);
-    Soft_SPI_DelayUs(1);  /* CS ¸ßµçÆ½×îÐ¡¿í¶È */
-}
-
-/**
- * @brief  µ¥×Ö½Ú SPI È«Ë«¹¤´«Êä (MSB first)
- *
- *   Ã¿×Ö½Ú 8 ¸öÊ±ÖÓÖÜÆÚ, Ã¿¸öÖÜÆÚ:
- *     1. MOSI Êä³öµ±Ç°Î» (´Ó MSB ¿ªÊ¼)
- *     2. ¸ù¾Ý READ_ON_RISING ¾ö¶¨²ÉÑù/ÒÆÎ»Ë³Ðò:
- *        ÉÏÉýÑØ¶ÁÈ¡: ÏÈ²ÉÑù ¡ú ¶Á MISO ¡ú ºóÒÆÎ»
- *        ÏÂ½µÑØ¶ÁÈ¡: ÏÈÒÆÎ» ¡ú ¶Á MISO ¡ú ºó²ÉÑù
- *     3. Ñ­»·Ö±µ½ 8 Î»´«ÊäÍê³É
- *
- * @param  tx Òª·¢ËÍµÄ 8-bit Êý¾Ý
- * @return Í¬Ê±½ÓÊÕµ½µÄ 8-bit Êý¾Ý
- */
-uint8_t Soft_SPI_Transfer(uint8_t tx)
-{
-    uint8_t rx = 0;   /* ½ÓÊÕÊý¾Ý»º´æ */
-    uint8_t i;        /* Î»¼ÆÊýÆ÷     */
-
-    for (i = 0; i < 8; i++)
-    {
-        /* 1. Êä³öµ±Ç°×î¸ßÎ»µ½ MOSI */
-        if (tx & 0x80) MOSI_H(); else MOSI_L();
-        tx <<= 1;  /* ×óÒÆ, ×¼±¸ÏÂÒ»Î» */
-
-#if READ_ON_RISING
-        /* ÉÏÉýÑØ²ÉÑùÄ£Ê½ (Mode 0 / Mode 3):
-         *   SCK ÉÏÉýÑØÊ± MISO Êý¾ÝÒÑÎÈ¶¨ ¡ú ÏÈ²ÉÑùÔÙÒÆÎ» */
-        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
-        EDGE_SAMPLE();                /* ²úÉú²ÉÑù±ßÑØ    */
-        rx <<= 1;                     /* ½ÓÊÕ¼Ä´æÆ÷×óÒÆ  */
-        if (MISO_R()) rx |= 0x01;    /* ¶ÁÈ¡ MISO µçÆ½  */
-        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
-        EDGE_SHIFT();                 /* ²úÉúÒÆÎ»±ßÑØ    */
-#else
-        /* ÏÂ½µÑØ²ÉÑùÄ£Ê½ (Mode 1 / Mode 2) ¡û INA229:
-         *   SCK ÏÂ½µÑØÊ± MISO Êý¾ÝÒÑÎÈ¶¨ ¡ú ÏÈÒÆÎ»ÔÙ²ÉÑù */
-        EDGE_SHIFT();                 /* ²úÉúÒÆÎ»±ßÑØ (ÉÏÉýÑØ, ´ÓÉè±¸Ëø´æ MOSI) */
-        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
-        rx <<= 1;
-        if (MISO_R()) rx |= 0x01;    /* ¶ÁÈ¡ MISO µçÆ½ */
-        EDGE_SAMPLE();                /* ²úÉú²ÉÑù±ßÑØ (ÏÂ½µÑØ) */
-#endif
-        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
-    }
-    return rx;
-}
-
-/**
- * @brief  ¶à×Ö½Ú SPI ÅúÁ¿´«Êä
- *
- *   ÒÀ´Îµ÷ÓÃ Soft_SPI_Transfer() ´«Êä len ×Ö½Ú¡£
- *   tx Îª NULL Ê±È«²¿·¢ËÍ 0x00 (½ö½ÓÊÕÄ£Ê½),
- *   rx Îª NULL Ê±¶ªÆú½ÓÊÕÊý¾Ý (½ö·¢ËÍÄ£Ê½)¡£
- *
- * @param  tx  ·¢ËÍ»º³åÇø (¿ÉÎª NULL)
- * @param  rx  ½ÓÊÕ»º³åÇø (¿ÉÎª NULL)
- * @param  len ´«Êä×Ö½ÚÊý
- */
-void Soft_SPI_TransferBuf(const uint8_t *tx, uint8_t *rx, uint16_t len)
-{
-    uint16_t i;
-    for (i = 0; i < len; i++) {
-        /*
-         * ·¢ËÍ: tx ·Ç¿Õ ¡ú tx[i], ·ñÔò ¡ú 0x00 (Ìî³ä)
-         * ½ÓÊÕ: rx ·Ç¿Õ ¡ú ´æÈë rx[i], ·ñÔò ¡ú ¶ªÆú
-         */
-        uint8_t r = Soft_SPI_Transfer(tx ? tx[i] : 0x00);
-        if (rx) rx[i] = r;
-    }
-}
+/**
+ * @file    soft_spi.c
+ * @brief   è½¯ä»¶æ¨¡æ‹Ÿ SPI æ€»çº¿é©±åŠ¨å®žçŽ°
+ *
+ * @author  (ä½ çš„åå­—)
+ * @date    (æ—¥æœŸ)
+ *
+ * @note    é€šè¿‡ HAL GPIO å‡½æ•°æŽ§åˆ¶å¼•è„šç”µå¹³, æ¨¡æ‹Ÿ SPI æ—¶åºã€‚
+ *          æ”¯æŒ CPOL/CPHA å››ç§æ¨¡å¼ (Mode 0/1/2/3)ã€‚
+ *
+ *   SPI æ¯ä½ä¼ è¾“æµç¨‹ (Mode 1, CPOL=0, CPHA=1):
+ *     1. MOSI è¾“å‡ºæ•°æ®ä½
+ *     2. å»¶æ—¶ t_setup
+ *     3. SCK ä¸Šå‡æ²¿ (ç§»ä½è¾¹æ²¿, INA229 é”å­˜ MOSI)
+ *     4. å»¶æ—¶ t_hold
+ *     5. è¯»å– MISO ç”µå¹³
+ *     6. SCK ä¸‹é™æ²¿ (é‡‡æ ·è¾¹æ²¿)
+ *     7. å»¶æ—¶
+ *
+ *   æ³¨æ„: ä¸åŒ SPI æ¨¡å¼ä¸‹çš„ EDGE_SHIFT / EDGE_SAMPLE å®šä¹‰ä¸åŒ,
+ *         ä½†ä»£ç ç»“æž„ç»Ÿä¸€é€šè¿‡æ¡ä»¶ç¼–è¯‘å¤„ç†ã€‚
+ */
+
+#include "soft_spi.h"
+#include "system.h"   /* SystemCoreClock */
+
+/*---------------------------------------------------------------------------
+ * å†…éƒ¨å® (ä»…æœ¬æ–‡ä»¶å¯è§)
+ *
+ *   å°† HAL GPIO æ“ä½œå°è£…ä¸ºç®€æ´å®, æé«˜ä»£ç å¯è¯»æ€§ã€‚
+ *   æ³¨æ„: SCLK_H/SCLK_L çš„ç”µå¹³å«ä¹‰å–å†³äºŽ CPOL é…ç½®:
+ *     CPOL=0: SCLK_H=SET (é«˜æœ‰æ•ˆ), SCLK_L=RESET (ä½Žæœ‰æ•ˆ)
+ *     CPOL=1: SCLK_H=RESET, SCLK_L=SET (æžæ€§åè½¬)
+ *---------------------------------------------------------------------------*/
+
+/** @brief MOSI è¾“å‡ºé«˜ç”µå¹³ */
+#define MOSI_H() HAL_GPIO_WritePin(SOFT_SPI_MOSI_PORT, SOFT_SPI_MOSI_PIN, GPIO_PIN_SET)
+/** @brief MOSI è¾“å‡ºä½Žç”µå¹³ */
+#define MOSI_L() HAL_GPIO_WritePin(SOFT_SPI_MOSI_PORT, SOFT_SPI_MOSI_PIN, GPIO_PIN_RESET)
+/** @brief è¯»å– MISO å¼•è„šç”µå¹³ (1=é«˜, 0=ä½Ž) */
+#define MISO_R() HAL_GPIO_ReadPin(SOFT_SPI_MISO_PORT, SOFT_SPI_MISO_PIN)
+
+/*
+ * SCK ç”µå¹³å®šä¹‰: æ ¹æ® CPOL å†³å®š "é«˜" "ä½Ž" å¯¹åº”çš„ GPIO æ“ä½œ
+ *   CPOL=0: ç©ºé—²ä½Ž â†’ SCLK_H=ç½®é«˜, SCLK_L=ç½®ä½Ž
+ *   CPOL=1: ç©ºé—²é«˜ â†’ SCLK_H=ç½®ä½Ž, SCLK_L=ç½®é«˜ (åè½¬)
+ */
+#if SOFT_SPI_CPOL == 0
+  #define SCLK_H() HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_SET)
+  #define SCLK_L() HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_RESET)
+#else
+  #define SCLK_H() HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_RESET)
+  #define SCLK_L() HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_SET)
+#endif
+
+/*
+ * æ ¹æ® CPOL/CPHA ç»„åˆå®šä¹‰ç§»ä½è¾¹æ²¿å’Œé‡‡æ ·è¾¹æ²¿:
+ *
+ *   Mode 0 (CPOL=0, CPHA=0): ç©ºé—²ä½Ž, ä¸Šå‡æ²¿é‡‡æ ·, ä¸‹é™æ²¿ç§»ä½
+ *     â†’ å…ˆé‡‡æ ·(SCKâ†‘), åŽç§»ä½(SCKâ†“)
+ *     â†’ MISO åœ¨ä¸Šå‡æ²¿è¢«ä»Žè®¾å¤‡æ›´æ–°, ä¸»è®¾å¤‡åœ¨ä¸Šå‡æ²¿åŽè¯»å–
+ *
+ *   Mode 1 (CPOL=0, CPHA=1): ç©ºé—²ä½Ž, ä¸‹é™æ²¿é‡‡æ ·, ä¸Šå‡æ²¿ç§»ä½
+ *     â†’ å…ˆç§»ä½(SCKâ†‘), åŽé‡‡æ ·(SCKâ†“)
+ *     â†’ MISO åœ¨ä¸‹é™æ²¿è¢«ä»Žè®¾å¤‡æ›´æ–°, ä¸»è®¾å¤‡åœ¨ä¸‹é™æ²¿å‰è¯»å–
+ *     â†’ INA229 ä½¿ç”¨æ­¤æ¨¡å¼!
+ *
+ *   Mode 2 (CPOL=1, CPHA=0): ç©ºé—²é«˜, ä¸‹é™æ²¿é‡‡æ ·, ä¸Šå‡æ²¿ç§»ä½
+ *   Mode 3 (CPOL=1, CPHA=1): ç©ºé—²é«˜, ä¸Šå‡æ²¿é‡‡æ ·, ä¸‹é™æ²¿ç§»ä½
+ */
+#if   (SOFT_SPI_CPOL == 0 && SOFT_SPI_CPHA == 0)   /* Mode 0 */
+  #define EDGE_SHIFT()   SCLK_L()    /**< ç§»ä½è¾¹æ²¿ = ä¸‹é™æ²¿ */
+  #define EDGE_SAMPLE()  SCLK_H()    /**< é‡‡æ ·è¾¹æ²¿ = ä¸Šå‡æ²¿ */
+  #define READ_ON_RISING  1          /**< MISO åœ¨ä¸Šå‡æ²¿åŽè¯»å– */
+#elif (SOFT_SPI_CPOL == 0 && SOFT_SPI_CPHA == 1)   /* Mode 1 â† INA229 */
+  #define EDGE_SHIFT()   SCLK_H()
+  #define EDGE_SAMPLE()  SCLK_L()
+  #define READ_ON_RISING  0          /**< MISO åœ¨ä¸‹é™æ²¿åŽè¯»å– */
+#elif (SOFT_SPI_CPOL == 1 && SOFT_SPI_CPHA == 0)   /* Mode 2 */
+  #define EDGE_SHIFT()   SCLK_H()
+  #define EDGE_SAMPLE()  SCLK_L()
+  #define READ_ON_RISING  0
+#elif (SOFT_SPI_CPOL == 1 && SOFT_SPI_CPHA == 1)   /* Mode 3 */
+  #define EDGE_SHIFT()   SCLK_L()
+  #define EDGE_SAMPLE()  SCLK_H()
+  #define READ_ON_RISING  1
+#endif
+
+/*---------------------------------------------------------------------------*/
+
+/**
+ * @brief  å¾®ç§’çº§ç²—ç•¥å»¶æ—¶ (åŸºäºŽ CPU ç©ºæŒ‡ä»¤å¾ªçŽ¯)
+ *
+ *   è®¡æ•°å€¼ = us Ã— SystemCoreClock / 8000000
+ *   å…¶ä¸­ 8000000 æ˜¯ç»éªŒç³»æ•°, çº¦ç­‰äºŽæ¯å¾®ç§’çš„ NOP å¾ªçŽ¯æ¬¡æ•°,
+ *   éœ€æ ¹æ®å®žé™… MCU é¢‘çŽ‡å¾®è°ƒã€‚
+ *
+ *   @note  æ­¤å»¶æ—¶ç²¾åº¦è¾ƒä½Ž, ä»…ç”¨äºŽ SPI æ—¶åºæŽ§åˆ¶, ä¸é€‚ç”¨äºŽç²¾ç¡®å®šæ—¶ã€‚
+ *          å¦‚æœ‰ç¡¬ä»¶å®šæ—¶å™¨, å»ºè®®æ›¿æ¢ä¸ºå®šæ—¶å™¨å»¶æ—¶ã€‚
+ *
+ * @param  us å»¶æ—¶å¾®ç§’æ•°
+ */
+void Soft_SPI_DelayUs(uint32_t us)
+{
+    /*
+     * 8000000 ä¸ºç»éªŒå€¼, ä½¿å¾— count è¿‘ä¼¼ç­‰äºŽ us å¾®ç§’å¯¹åº”çš„ NOP å¾ªçŽ¯æ¬¡æ•°ã€‚
+     * ä¾‹å¦‚ SystemCoreClock=72MHz â†’ us=1 â†’ count=9 â†’ çº¦ 1Î¼s
+     * å®žé™…å»¶æ—¶éœ€ç”¨ç¤ºæ³¢å™¨æ ¡å‡†ã€‚
+     */
+    uint32_t count = us * (SystemCoreClock / 8000000);
+    while (count--) {
+        __NOP();  /* å•å‘¨æœŸç©ºæ“ä½œ */
+    }
+}
+
+/**
+ * @brief  è½¯ä»¶ SPI åˆå§‹åŒ–
+ *
+ *   å°†æ‰€æœ‰ SPI å¼•è„šç½®ä¸ºåˆå§‹çŠ¶æ€:
+ *     - SCK  = ç©ºé—²ç”µå¹³ (CPOL å†³å®š)
+ *     - MOSI = ä½Ž
+ *     - CS   = é«˜ (ä¸é€‰ä¸­ä»Žè®¾å¤‡)
+ *
+ *   @note  ä»¥ä¸‹è¢«æ³¨é‡ŠæŽ‰çš„ HAL GPIO åˆå§‹åŒ–ä»£ç ä»…ä¾›å‚è€ƒ,
+ *          å®žé™… GPIO åˆå§‹åŒ–è¯·åœ¨ main.c æˆ–å…¶ä»–åˆå§‹åŒ–å‡½æ•°ä¸­å®Œæˆ,
+ *          æˆ–å–æ¶ˆæ³¨é‡Šä»¥ä¸‹ä»£ç å¹¶ç¡®ä¿ __HAL_RCC_xxx_CLK_ENABLE æ­£ç¡®ã€‚
+ */
+void Soft_SPI_Init(void)
+{
+    /*
+     * ====== å¯é€‰: HAL GPIO åˆå§‹åŒ– (è‹¥ä¸åœ¨æ­¤å¤„åˆå§‹åŒ–, è¯·åœ¨å¤–éƒ¨å®Œæˆ) ======
+     *
+     *   å¦‚æžœ GPIO å·²åœ¨ CubeMX ç”Ÿæˆçš„ MX_GPIO_Init() ä¸­åˆå§‹åŒ–,
+     *   ä»¥ä¸‹ä»£ç æ— éœ€å–æ¶ˆæ³¨é‡Šã€‚
+     *
+     *   å–æ¶ˆæ³¨é‡Šå‰è¯·ç¡®è®¤:
+     *     - RCC æ—¶é’Ÿå·²ä½¿èƒ½
+     *     - å¼•è„šæ¨¡å¼æ­£ç¡® (SCK/MOSI/CS=æŽ¨æŒ½è¾“å‡º, MISO=æµ®ç©ºè¾“å…¥)
+     *
+     *   GPIO_InitTypeDef g = {0};
+     *   __HAL_RCC_GPIOA_CLK_ENABLE();
+     *   __HAL_RCC_GPIOB_CLK_ENABLE();
+     *
+     *   g.Pin   = SOFT_SPI_SCLK_PIN;
+     *   g.Mode  = GPIO_MODE_OUTPUT_PP;
+     *   g.Pull  = GPIO_NOPULL;
+     *   g.Speed = GPIO_SPEED_FREQ_HIGH;
+     *   HAL_GPIO_Init(SOFT_SPI_SCLK_PORT, &g);
+     *
+     *   g.Pin = SOFT_SPI_MOSI_PIN;
+     *   HAL_GPIO_Init(SOFT_SPI_MOSI_PORT, &g);
+     *
+     *   g.Pin  = SOFT_SPI_MISO_PIN;
+     *   g.Mode = GPIO_MODE_INPUT;
+     *   HAL_GPIO_Init(SOFT_SPI_MISO_PORT, &g);
+     *
+     *   g.Pin  = SOFT_SPI_CS_PIN;
+     *   g.Mode = GPIO_MODE_OUTPUT_PP;
+     *   HAL_GPIO_Init(SOFT_SPI_CS_PORT, &g);
+     */
+
+    /* è®¾ç½®åˆå§‹ç”µå¹³: SCK ç©ºé—², MOSI ä½Ž, CS é«˜ (ä¸é€‰ä¸­) */
+    SCLK_L();           /* æ—¶é’Ÿç½®ç©ºé—²ç”µå¹³ */
+    MOSI_L();           /* MOSI ç½®ä½Ž     */
+    Soft_SPI_CS_High(); /* CS æ‹‰é«˜ (ä¸é€‰ä¸­) */
+    Soft_SPI_DelayUs(10); /* ç¨³å®šå»¶æ—¶ */
+}
+
+/**
+ * @brief  æ‹‰ä½Žç‰‡é€‰ä¿¡å· (CS=0), å¼€å§‹ SPI é€šä¿¡
+ * @note   æ‹‰ä½ŽåŽå»¶æ—¶ 1Î¼s ä»¥æ»¡è¶³ä»Žè®¾å¤‡çš„ CS å»ºç«‹æ—¶é—´ (t_CSSC)
+ */
+void Soft_SPI_CS_Low(void)
+{
+    HAL_GPIO_WritePin(SOFT_SPI_CS_PORT, SOFT_SPI_CS_PIN, GPIO_PIN_RESET);
+    Soft_SPI_DelayUs(1);  /* CS å»ºç«‹æ—¶é—´ */
+}
+
+/**
+ * @brief  æ‹‰é«˜ç‰‡é€‰ä¿¡å· (CS=1), ç»“æŸ SPI é€šä¿¡
+ * @note   æ‹‰é«˜å‰å»¶æ—¶ 1Î¼s ä»¥æ»¡è¶³ä»Žè®¾å¤‡çš„æ•°æ®ä¿æŒæ—¶é—´ (t_CSH),
+ *         æ‹‰é«˜åŽå»¶æ—¶ 1Î¼s ä»¥æ»¡è¶³ CS é«˜ç”µå¹³æœ€å°å®½åº¦ã€‚
+ */
+void Soft_SPI_CS_High(void)
+{
+    Soft_SPI_DelayUs(1);  /* CS ä¿æŒæ—¶é—´ (æœ€åŽä¸€ä½æ•°æ®ç¨³å®š) */
+    HAL_GPIO_WritePin(SOFT_SPI_CS_PORT, SOFT_SPI_CS_PIN, GPIO_PIN_SET);
+    Soft_SPI_DelayUs(1);  /* CS é«˜ç”µå¹³æœ€å°å®½åº¦ */
+}
+
+/**
+ * @brief  å•å­—èŠ‚ SPI å…¨åŒå·¥ä¼ è¾“ (MSB first)
+ *
+ *   æ¯å­—èŠ‚ 8 ä¸ªæ—¶é’Ÿå‘¨æœŸ, æ¯ä¸ªå‘¨æœŸ:
+ *     1. MOSI è¾“å‡ºå½“å‰ä½ (ä»Ž MSB å¼€å§‹)
+ *     2. æ ¹æ® READ_ON_RISING å†³å®šé‡‡æ ·/ç§»ä½é¡ºåº:
+ *        ä¸Šå‡æ²¿è¯»å–: å…ˆé‡‡æ · â†’ è¯» MISO â†’ åŽç§»ä½
+ *        ä¸‹é™æ²¿è¯»å–: å…ˆç§»ä½ â†’ è¯» MISO â†’ åŽé‡‡æ ·
+ *     3. å¾ªçŽ¯ç›´åˆ° 8 ä½ä¼ è¾“å®Œæˆ
+ *
+ * @param  tx è¦å‘é€çš„ 8-bit æ•°æ®
+ * @return åŒæ—¶æŽ¥æ”¶åˆ°çš„ 8-bit æ•°æ®
+ */
+uint8_t Soft_SPI_Transfer(uint8_t tx)
+{
+    uint8_t rx = 0;   /* æŽ¥æ”¶æ•°æ®ç¼“å­˜ */
+    uint8_t i;        /* ä½è®¡æ•°å™¨     */
+
+    for (i = 0; i < 8; i++)
+    {
+        /* 1. è¾“å‡ºå½“å‰æœ€é«˜ä½åˆ° MOSI */
+        if (tx & 0x80) MOSI_H(); else MOSI_L();
+        tx <<= 1;  /* å·¦ç§», å‡†å¤‡ä¸‹ä¸€ä½ */
+
+#if READ_ON_RISING
+        /* ä¸Šå‡æ²¿é‡‡æ ·æ¨¡å¼ (Mode 0 / Mode 3):
+         *   SCK ä¸Šå‡æ²¿æ—¶ MISO æ•°æ®å·²ç¨³å®š â†’ å…ˆé‡‡æ ·å†ç§»ä½ */
+        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
+        EDGE_SAMPLE();                /* äº§ç”Ÿé‡‡æ ·è¾¹æ²¿    */
+        rx <<= 1;                     /* æŽ¥æ”¶å¯„å­˜å™¨å·¦ç§»  */
+        if (MISO_R()) rx |= 0x01;    /* è¯»å– MISO ç”µå¹³  */
+        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
+        EDGE_SHIFT();                 /* äº§ç”Ÿç§»ä½è¾¹æ²¿    */
+#else
+        /* ä¸‹é™æ²¿é‡‡æ ·æ¨¡å¼ (Mode 1 / Mode 2) â† INA229:
+         *   SCK ä¸‹é™æ²¿æ—¶ MISO æ•°æ®å·²ç¨³å®š â†’ å…ˆç§»ä½å†é‡‡æ · */
+        EDGE_SHIFT();                 /* äº§ç”Ÿç§»ä½è¾¹æ²¿ (ä¸Šå‡æ²¿, ä»Žè®¾å¤‡é”å­˜ MOSI) */
+        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
+        rx <<= 1;
+        if (MISO_R()) rx |= 0x01;    /* è¯»å– MISO ç”µå¹³ */
+        EDGE_SAMPLE();                /* äº§ç”Ÿé‡‡æ ·è¾¹æ²¿ (ä¸‹é™æ²¿) */
+#endif
+        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
+    }
+    return rx;
+}
+
+/**
+ * @brief  å¤šå­—èŠ‚ SPI æ‰¹é‡ä¼ è¾“
+ *
+ *   ä¾æ¬¡è°ƒç”¨ Soft_SPI_Transfer() ä¼ è¾“ len å­—èŠ‚ã€‚
+ *   tx ä¸º NULL æ—¶å…¨éƒ¨å‘é€ 0x00 (ä»…æŽ¥æ”¶æ¨¡å¼),
+ *   rx ä¸º NULL æ—¶ä¸¢å¼ƒæŽ¥æ”¶æ•°æ® (ä»…å‘é€æ¨¡å¼)ã€‚
+ *
+ * @param  tx  å‘é€ç¼“å†²åŒº (å¯ä¸º NULL)
+ * @param  rx  æŽ¥æ”¶ç¼“å†²åŒº (å¯ä¸º NULL)
+ * @param  len ä¼ è¾“å­—èŠ‚æ•°
+ */
+void Soft_SPI_TransferBuf(const uint8_t *tx, uint8_t *rx, uint16_t len)
+{
+    uint16_t i;
+    for (i = 0; i < len; i++) {
+        /*
+         * å‘é€: tx éžç©º â†’ tx[i], å¦åˆ™ â†’ 0x00 (å¡«å……)
+         * æŽ¥æ”¶: rx éžç©º â†’ å­˜å…¥ rx[i], å¦åˆ™ â†’ ä¸¢å¼ƒ
+         */
+        uint8_t r = Soft_SPI_Transfer(tx ? tx[i] : 0x00);
+        if (rx) rx[i] = r;
+    }
+}

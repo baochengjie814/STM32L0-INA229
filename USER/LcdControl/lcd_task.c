@@ -1,166 +1,166 @@
-/**
-  ******************************************************************************
-  * ÎÄ¼þÃû³Ì: lcd_task.c
-  * ×÷    Õß: ºÆÊ¢¿Æ¼¼
-  * °æ    ±¾: V1.0
-  * ±àÐ´ÈÕÆÚ: 
-  * ¹¦    ÄÜ: ¶¨Ê±½øÐÐlcdµÄÏÔÊ¾ÈÎÎñ
-  ******************************************************************************
-  */
-/* °üº¬Í·ÎÄ¼þ ---------------------------------------------------------------*/
-#include "lcd_task.h"
-#include "lcd_drv.h"
-#include "lcd_mid.h"
-#include "system.h"
-
-volatile u16 LcdTaskId = 10;
-volatile u16 LcdTaskTim = 0;
-
-extern u8 KeyNum;
-extern s8 YCursor;
-extern s8 YCursorLast;
-extern u8 InitPage1;
-extern u8 InitPage2;
-
-
-/**
-  * º¯Êý¹¦ÄÜ: ¶¨Ê±½øÐÐlcdµÄÏÔÊ¾ÈÎÎñ
-  * ÊäÈë²ÎÊý:
-  * ·µ »Ø Öµ: 
-  * Ëµ    Ã÷:
-  */
-	
-void Lcd_Task(void)
-{
-    switch(LcdTaskId)
-    {
-			   case 10:
-        {
-            if(LcdTaskTim>=100)        //100ms
-            {
-                LcdTaskTim = 0;
-                LcdTaskId = 20;
-            }
-        }
-				break;
-        case 20:
-        {                
-            LCD_Display_Page1();
-            LcdTaskId = 10; 
-				}
-		}
-}
-//void Lcd_Task(void)
-//{
-//    switch(LcdTaskId)
-//    {
-//        case 10:
-//        {
-//            if(LcdTaskTim>=1000)        //200ms
-//            {
-//                LcdTaskTim = 0;
-//                LcdTaskId = 20;
-//            }
-//        }
-//        break;
-//        
-//        case 20:
-//        {                
-//            LCD_Display_Page1();
-//            LcdTaskId = 10; 
-//            if(KeyNum == 4)
-//            {
-//                KeyNum = 0;
-//                InitPage2 = 0;
-//                LCD_Clear();
-//                LcdTaskId = 30;
-//            }                    
-//            if(KeyNum == 2)
-//            {
-//                KeyNum = 0;
-////                InitPage1 = 0;
-////                LCD_Clear();
-//                Speed_Set_Dir = -Speed_Set_Dir;
-//                LcdTaskId = 10;            
-//            }
-//        }
-//        break;
-//        
-//        case 30:
-//        { 
-//             LCD_Display_Page2();
-//            if(KeyNum == 1)
-//            {
-//                YCursorLast = YCursor;
-//                KeyNum = 0;
-//                YCursor += 16;
-//                if(YCursor > 64)YCursor = 0;
-//            }        
-
-//            if(KeyNum == 3)
-//            {
-//                YCursorLast = YCursor;
-//                KeyNum = 0;
-//                YCursor -= 16;
-//                if(YCursor < 0)YCursor = 64;        
-//            }
-//            
-//            if(KeyNum == 2)
-//            {
-//                KeyNum = 0;
-//                InitPage1 = 0;
-//                LCD_Clear();
-//                LcdTaskId = 10;            
-//            }
-
-//            if(KeyNum == 4)
-//            {
-//                KeyNum = 0;
-//                InitPage1 = 0;
-//                LCD_Clear();
-//                LcdTaskId = 10;    
-
-//                switch(YCursor)
-//                {
-//                    case 0:
-//                    {
-//                        MC.Motor.RunState = MOTOR_SENSORUSE;
-//                        MC.Motor.RunMode = CURRENT_CLOSE_LOOP;
-//                    }break;
-//                    
-//                    case 16:
-//                    {
-//                        MC.Motor.RunState = MOTOR_SENSORUSE;
-//                        MC.Motor.RunMode = SPEED_CURRENT_LOOP;
-//                    }break;
-//        
-//                    case 32:
-//                    {
-//                        MC.Motor.RunState = MOTOR_SENSORUSE;
-//                        MC.Motor.RunMode = POS_SPEED_CURRENT_LOOP;
-//                    }break;
-//                    
-//                    case 48:
-//                    {
-//                        MC.Motor.RunState = MOTOR_SENSORLESS;
-//                        MC.Motor.RunMode = STRONG_DRAG_SMO_SPEED_CURRENT_LOOP;
-//                    }break;
-//                    
-//                    case 64:
-//                    {
-//                        MC.Motor.RunState = MOTOR_SENSORLESS;
-//                        MC.Motor.RunMode = HFI_SMO_SPEED_CURRENT_CLOSE;
-//                        MC.HFI.NSDFlag = 0;
-//                    }break;
-//                }        
-//            }                
-//        }
-//        break;
-//        
-//    default:
-//      break;            
-//    }
-//}
-
-
-
+/**
+  ******************************************************************************
+  * æ–‡ä»¶åç¨‹: lcd_task.c
+  * ä½œ    è€…: æµ©ç››ç§‘æŠ€
+  * ç‰ˆ    æœ¬: V1.0
+  * ç¼–å†™æ—¥æœŸ: 
+  * åŠŸ    èƒ½: å®šæ—¶è¿›è¡Œlcdçš„æ˜¾ç¤ºä»»åŠ¡
+  ******************************************************************************
+  */
+/* åŒ…å«å¤´æ–‡ä»¶ ---------------------------------------------------------------*/
+#include "lcd_task.h"
+#include "lcd_drv.h"
+#include "lcd_mid.h"
+#include "system.h"
+
+volatile u16 LcdTaskId = 10;
+volatile u16 LcdTaskTim = 0;
+
+extern u8 KeyNum;
+extern s8 YCursor;
+extern s8 YCursorLast;
+extern u8 InitPage1;
+extern u8 InitPage2;
+
+
+/**
+  * å‡½æ•°åŠŸèƒ½: å®šæ—¶è¿›è¡Œlcdçš„æ˜¾ç¤ºä»»åŠ¡
+  * è¾“å…¥å‚æ•°:
+  * è¿” å›ž å€¼: 
+  * è¯´    æ˜Ž:
+  */
+	
+void Lcd_Task(void)
+{
+    switch(LcdTaskId)
+    {
+			   case 10:
+        {
+            if(LcdTaskTim>=100)        //100ms
+            {
+                LcdTaskTim = 0;
+                LcdTaskId = 20;
+            }
+        }
+				break;
+        case 20:
+        {                
+            LCD_Display_Page1();
+            LcdTaskId = 10; 
+				}
+		}
+}
+//void Lcd_Task(void)
+//{
+//    switch(LcdTaskId)
+//    {
+//        case 10:
+//        {
+//            if(LcdTaskTim>=1000)        //200ms
+//            {
+//                LcdTaskTim = 0;
+//                LcdTaskId = 20;
+//            }
+//        }
+//        break;
+//        
+//        case 20:
+//        {                
+//            LCD_Display_Page1();
+//            LcdTaskId = 10; 
+//            if(KeyNum == 4)
+//            {
+//                KeyNum = 0;
+//                InitPage2 = 0;
+//                LCD_Clear();
+//                LcdTaskId = 30;
+//            }                    
+//            if(KeyNum == 2)
+//            {
+//                KeyNum = 0;
+////                InitPage1 = 0;
+////                LCD_Clear();
+//                Speed_Set_Dir = -Speed_Set_Dir;
+//                LcdTaskId = 10;            
+//            }
+//        }
+//        break;
+//        
+//        case 30:
+//        { 
+//             LCD_Display_Page2();
+//            if(KeyNum == 1)
+//            {
+//                YCursorLast = YCursor;
+//                KeyNum = 0;
+//                YCursor += 16;
+//                if(YCursor > 64)YCursor = 0;
+//            }        
+
+//            if(KeyNum == 3)
+//            {
+//                YCursorLast = YCursor;
+//                KeyNum = 0;
+//                YCursor -= 16;
+//                if(YCursor < 0)YCursor = 64;        
+//            }
+//            
+//            if(KeyNum == 2)
+//            {
+//                KeyNum = 0;
+//                InitPage1 = 0;
+//                LCD_Clear();
+//                LcdTaskId = 10;            
+//            }
+
+//            if(KeyNum == 4)
+//            {
+//                KeyNum = 0;
+//                InitPage1 = 0;
+//                LCD_Clear();
+//                LcdTaskId = 10;    
+
+//                switch(YCursor)
+//                {
+//                    case 0:
+//                    {
+//                        MC.Motor.RunState = MOTOR_SENSORUSE;
+//                        MC.Motor.RunMode = CURRENT_CLOSE_LOOP;
+//                    }break;
+//                    
+//                    case 16:
+//                    {
+//                        MC.Motor.RunState = MOTOR_SENSORUSE;
+//                        MC.Motor.RunMode = SPEED_CURRENT_LOOP;
+//                    }break;
+//        
+//                    case 32:
+//                    {
+//                        MC.Motor.RunState = MOTOR_SENSORUSE;
+//                        MC.Motor.RunMode = POS_SPEED_CURRENT_LOOP;
+//                    }break;
+//                    
+//                    case 48:
+//                    {
+//                        MC.Motor.RunState = MOTOR_SENSORLESS;
+//                        MC.Motor.RunMode = STRONG_DRAG_SMO_SPEED_CURRENT_LOOP;
+//                    }break;
+//                    
+//                    case 64:
+//                    {
+//                        MC.Motor.RunState = MOTOR_SENSORLESS;
+//                        MC.Motor.RunMode = HFI_SMO_SPEED_CURRENT_CLOSE;
+//                        MC.HFI.NSDFlag = 0;
+//                    }break;
+//                }        
+//            }                
+//        }
+//        break;
+//        
+//    default:
+//      break;            
+//    }
+//}
+
+
+

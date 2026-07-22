@@ -1,13 +1,13 @@
-#ifndef __DELAY_H
-#define __DELAY_H
-
-#include <stdint.h>      // Ê¹ÓÃ uint32_t µÈÀàĞÍ
-// #include "sys.h"       // Èç¹û sys.h ÖĞÓĞ³åÍ»¶¨Òå£¬¿ÉÒÔ×¢ÊÍµô»ò±£Áô
-
-// ×¢Òâ£º¸ÄÎª delay_init()£¬²»ÔÙÊ¹ÓÃ delay_us_init()
-// ÒòÎª SysTick ·½°¸²»ĞèÒª·µ»Ø HAL_StatusTypeDef
-void delay_init(void);
-void delay_us(uint32_t us);
-void delay_ms(uint32_t ms);   // ĞÂÔöºÁÃëÑÓÊ±£¬·½±ãÊ¹ÓÃ
-
-#endif
+#ifndef __DELAY_H
+#define __DELAY_H
+
+#include <stdint.h>      // ä½¿ç”¨ uint32_t ç­‰ç±»å‹
+// #include "sys.h"       // å¦‚æœ sys.h ä¸­æœ‰å†²çªå®šä¹‰ï¼Œå¯ä»¥æ³¨é‡Šæ‰æˆ–ä¿ç•™
+
+// æ³¨æ„ï¼šæ”¹ä¸º delay_init()ï¼Œä¸å†ä½¿ç”¨ delay_us_init()
+// å› ä¸º SysTick æ–¹æ¡ˆä¸éœ€è¦è¿”å› HAL_StatusTypeDef
+void delay_init(void);
+void delay_us(uint32_t us);
+void delay_ms(uint32_t ms);   // æ–°å¢æ¯«ç§’å»¶æ—¶ï¼Œæ–¹ä¾¿ä½¿ç”¨
+
+#endif

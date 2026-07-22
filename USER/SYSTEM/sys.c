@@ -1,44 +1,44 @@
-#include "sys.h"  
-#include "system.h"
-
-//THUMBÖ¸Áî²»Ö§³Ö»ã±àÄÚÁª
-//²ÉÓÃÈçÏÂ·½·¨ÊµÏÖÖ´ĞĞ»ã±àÖ¸ÁîWFI  
-//__asm void WFI_SET(void)
-//{
-//	WFI;		  
-//}
-////¹Ø±ÕËùÓĞÖĞ¶Ï(µ«ÊÇ²»°üÀ¨faultºÍNMIÖĞ¶Ï)
-//__asm void INTX_DISABLE(void)
-//{
-//	CPSID   I
-//	BX      LR	  
-//}
-////¿ªÆôËùÓĞÖĞ¶Ï
-//__asm void INTX_ENABLE(void)
-//{
-//	CPSIE   I
-//	BX      LR  
-//}
-////ÉèÖÃÕ»¶¥µØÖ·
-////addr:Õ»¶¥µØÖ·
-//__asm void MSR_MSP(u32 addr) 
-//{
-//	MSR MSP, r0 			//set Main Stack value
-//	BX r14
-//}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#include "sys.h"  
+#include "system.h"
+
+//THUMBæŒ‡ä»¤ä¸æ”¯æŒæ±‡ç¼–å†…è”
+//é‡‡ç”¨å¦‚ä¸‹æ–¹æ³•å®ç°æ‰§è¡Œæ±‡ç¼–æŒ‡ä»¤WFI  
+//__asm void WFI_SET(void)
+//{
+//	WFI;		  
+//}
+////å…³é—­æ‰€æœ‰ä¸­æ–­(ä½†æ˜¯ä¸åŒ…æ‹¬faultå’ŒNMIä¸­æ–­)
+//__asm void INTX_DISABLE(void)
+//{
+//	CPSID   I
+//	BX      LR	  
+//}
+////å¼€å¯æ‰€æœ‰ä¸­æ–­
+//__asm void INTX_ENABLE(void)
+//{
+//	CPSIE   I
+//	BX      LR  
+//}
+////è®¾ç½®æ ˆé¡¶åœ°å€
+////addr:æ ˆé¡¶åœ°å€
+//__asm void MSR_MSP(u32 addr) 
+//{
+//	MSR MSP, r0 			//set Main Stack value
+//	BX r14
+//}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

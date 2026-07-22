@@ -1,135 +1,135 @@
-/**
- * @file    soft_spi.h
- * @brief   Èí¼þÄ£Äâ SPI ×ÜÏßÇý¶¯ (Í·ÎÄ¼þ)
- *
- * @author  (ÄãµÄÃû×Ö)
- * @date    (ÈÕÆÚ)
- *
- * @note    Í¨¹ý GPIO Î»·­×ªÄ£Äâ SPI Ê±Ðò, ²»ÒÀÀµ MCU Ó²¼þ SPI ÍâÉè¡£
- *          Ö§³Ö CPOL/CPHA ËÄÖÖÄ£Ê½ (Mode 0/1/2/3)¡£
- *
- *   Ê¹ÓÃÇ°ÇëÔÚÏÂ·½ "ÓÃ»§ÅäÖÃÇø" ÐÞ¸ÄÒý½ÅºÍÄ£Ê½¶¨Òå,
- *   ÒÔÆ¥ÅäÄãµÄÓ²¼þÁ¬½ÓºÍ INA229 µÄÊ±ÐòÒªÇó¡£
- *
- *   INA229 ÒªÇó: SPI Mode 1 (CPOL=0, CPHA=1), MSB first¡£
- *
- *   SPI Ä£Ê½×Ü½á:
- *     Mode 0: CPOL=0, CPHA=0  ¡ú ¿ÕÏÐ SCK=µÍ, ÉÏÉýÑØ²ÉÑù
- *     Mode 1: CPOL=0, CPHA=1  ¡ú ¿ÕÏÐ SCK=µÍ, ÏÂ½µÑØ²ÉÑù  ¡û INA229
- *     Mode 2: CPOL=1, CPHA=0  ¡ú ¿ÕÏÐ SCK=¸ß, ÏÂ½µÑØ²ÉÑù
- *     Mode 3: CPOL=1, CPHA=1  ¡ú ¿ÕÏÐ SCK=¸ß, ÉÏÉýÑØ²ÉÑù
- *
- *   ËÙ¶ÈËµÃ÷:
- *     SOFT_SPI_DELAY_US ¿ØÖÆÃ¿Î»Ö®¼äµÄÑÓ³Ù (¦Ìs),
- *     2¦Ìs ¡ú ~250kHz, 1¦Ìs ¡ú ~500kHz¡£
- *     INA229 ×î¸ßÖ§³Ö ~10MHz, µ«Èí¼þ SPI ÊÜ MCU ËÙ¶ÈÏÞÖÆ¡£
- */
-
-#ifndef __SOFT_SPI_H__
-#define __SOFT_SPI_H__
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include "main.h"
-#include <stdint.h>
-
-/*===========================================================================
- * ÓÃ»§ÅäÖÃÇø (¸ù¾ÝÊµ¼ÊÓ²¼þÁ¬½ÓÐÞ¸ÄÒÔÏÂºê)
- *===========================================================================*/
-
-/** @brief SCK Ê±ÖÓÒý½Å - GPIO ¶Ë¿Ú */
-#define SOFT_SPI_SCLK_PORT          GPIOA
-/** @brief SCK Ê±ÖÓÒý½Å - GPIO Òý½ÅºÅ */
-#define SOFT_SPI_SCLK_PIN           GPIO_PIN_5
-
-/** @brief MOSI Ö÷³ö´ÓÈëÒý½Å - GPIO ¶Ë¿Ú */
-#define SOFT_SPI_MOSI_PORT          GPIOA
-/** @brief MOSI Ö÷³ö´ÓÈëÒý½Å - GPIO Òý½ÅºÅ */
-#define SOFT_SPI_MOSI_PIN           GPIO_PIN_7
-
-/** @brief MISO Ö÷Èë´Ó³öÒý½Å - GPIO ¶Ë¿Ú */
-#define SOFT_SPI_MISO_PORT          GPIOA
-/** @brief MISO Ö÷Èë´Ó³öÒý½Å - GPIO Òý½ÅºÅ */
-#define SOFT_SPI_MISO_PIN           GPIO_PIN_6
-
-/** @brief CS Æ¬Ñ¡Òý½Å - GPIO ¶Ë¿Ú */
-#define SOFT_SPI_CS_PORT            GPIOB
-/** @brief CS Æ¬Ñ¡Òý½Å - GPIO Òý½ÅºÅ */
-#define SOFT_SPI_CS_PIN             GPIO_PIN_0
-
-/**
- * @brief SPI Ê±ÖÓ¼«ÐÔ (CPOL)
- *   0 = ¿ÕÏÐÊ± SCK ÎªµÍµçÆ½
- *   1 = ¿ÕÏÐÊ± SCK Îª¸ßµçÆ½
- */
-#define SOFT_SPI_CPOL               0
-
-/**
- * @brief SPI Ê±ÖÓÏàÎ» (CPHA)
- *   0 = µÚÒ»¸öÊ±ÖÓ±ßÑØ²ÉÑù
- *   1 = µÚ¶þ¸öÊ±ÖÓ±ßÑØ²ÉÑù
- */
-#define SOFT_SPI_CPHA               1
-
-/**
- * @brief Ã¿Î»Ö®¼äµÄÑÓ³Ù (¦Ìs)
- *   ¿ØÖÆ SPI Ê±ÖÓÆµÂÊ: f_SCK ¡Ö 1 / (DELAY_US ¡Á 3) Hz
- *   ÀýÈç DELAY_US=2 ¡ú f_SCK ¡Ö 166kHz
- */
-#define SOFT_SPI_DELAY_US           2
-
-/*===========================================================================
- * ¹«¹²º¯ÊýÉùÃ÷
- *===========================================================================*/
-
-/**
- * @brief  Èí¼þ SPI Î¢Ãë¼¶ÑÓÊ±
- * @param  us ÑÓÊ±Ê±¼ä (¦Ìs)
- * @note   Ê¹ÓÃ SystemCoreClock ½øÐÐ´ÖÂÔÑÓÊ±, ²»ÒÀÀµ¶¨Ê±Æ÷
- */
-void     Soft_SPI_DelayUs(uint32_t us);
-
-/**
- * @brief  Èí¼þ SPI ³õÊ¼»¯
- * @note   ½«ËùÓÐÒý½ÅÉèÎª³õÊ¼µçÆ½:
- *         SCK=µÍ, MOSI=µÍ, CS=¸ß (¿ÕÏÐ)
- *         ÈçÐè HAL ¿â GPIO ³õÊ¼»¯, ÇëÔÚÍâ²¿Íê³É»òÈ¡Ïû×¢ÊÍÄÚ²¿´úÂë
- */
-void     Soft_SPI_Init(void);
-
-/**
- * @brief  À­µÍÆ¬Ñ¡ (CS=0), ¿ªÊ¼ SPI ´«Êä
- * @note   À­µÍÇ°ºó¸÷ÓÐ 1¦Ìs ÑÓÊ±, È·±£Âú×ã INA229 µÄ CS ½¨Á¢/±£³ÖÊ±¼ä
- */
-void     Soft_SPI_CS_Low(void);
-
-/**
- * @brief  À­¸ßÆ¬Ñ¡ (CS=1), ½áÊø SPI ´«Êä
- * @note   À­¸ßÇ°ºó¸÷ÓÐ 1¦Ìs ÑÓÊ±
- */
-void     Soft_SPI_CS_High(void);
-
-/**
- * @brief  µ¥×Ö½Ú SPI ´«Êä (Í¬Ê±ÊÕ·¢)
- * @param  tx ·¢ËÍµÄ 8-bit Êý¾Ý (MSB first)
- * @return ½ÓÊÕµ½µÄ 8-bit Êý¾Ý
- * @note   ·¢ËÍºÍ½ÓÊÕÍ¬Ê±½øÐÐ, MSB first
- */
-uint8_t  Soft_SPI_Transfer(uint8_t tx);
-
-/**
- * @brief  ¶à×Ö½Ú SPI ´«Êä (¿ÉÑ¡ÊÕ·¢)
- * @param  tx  ·¢ËÍ»º³åÇøÖ¸Õë (¿ÉÎª NULL, ÔòÈ«²¿·¢ËÍ 0x00)
- * @param  rx  ½ÓÊÕ»º³åÇøÖ¸Õë (¿ÉÎª NULL, Ôò¶ªÆú½ÓÊÕÊý¾Ý)
- * @param  len ´«Êä×Ö½ÚÊý
- * @note   ·¢ËÍºÍ½ÓÊÕÍ¬Ê±½øÐÐ, Ã¿×Ö½Ú MSB first
- */
-void     Soft_SPI_TransferBuf(const uint8_t *tx, uint8_t *rx, uint16_t len);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* __SOFT_SPI_H__ */
+/**
+ * @file    soft_spi.h
+ * @brief   è½¯ä»¶æ¨¡æ‹Ÿ SPI æ€»çº¿é©±åŠ¨ (å¤´æ–‡ä»¶)
+ *
+ * @author  (ä½ çš„åå­—)
+ * @date    (æ—¥æœŸ)
+ *
+ * @note    é€šè¿‡ GPIO ä½ç¿»è½¬æ¨¡æ‹Ÿ SPI æ—¶åº, ä¸ä¾èµ– MCU ç¡¬ä»¶ SPI å¤–è®¾ã€‚
+ *          æ”¯æŒ CPOL/CPHA å››ç§æ¨¡å¼ (Mode 0/1/2/3)ã€‚
+ *
+ *   ä½¿ç”¨å‰è¯·åœ¨ä¸‹æ–¹ "ç”¨æˆ·é…ç½®åŒº" ä¿®æ”¹å¼•è„šå’Œæ¨¡å¼å®šä¹‰,
+ *   ä»¥åŒ¹é…ä½ çš„ç¡¬ä»¶è¿žæŽ¥å’Œ INA229 çš„æ—¶åºè¦æ±‚ã€‚
+ *
+ *   INA229 è¦æ±‚: SPI Mode 1 (CPOL=0, CPHA=1), MSB firstã€‚
+ *
+ *   SPI æ¨¡å¼æ€»ç»“:
+ *     Mode 0: CPOL=0, CPHA=0  â†’ ç©ºé—² SCK=ä½Ž, ä¸Šå‡æ²¿é‡‡æ ·
+ *     Mode 1: CPOL=0, CPHA=1  â†’ ç©ºé—² SCK=ä½Ž, ä¸‹é™æ²¿é‡‡æ ·  â† INA229
+ *     Mode 2: CPOL=1, CPHA=0  â†’ ç©ºé—² SCK=é«˜, ä¸‹é™æ²¿é‡‡æ ·
+ *     Mode 3: CPOL=1, CPHA=1  â†’ ç©ºé—² SCK=é«˜, ä¸Šå‡æ²¿é‡‡æ ·
+ *
+ *   é€Ÿåº¦è¯´æ˜Ž:
+ *     SOFT_SPI_DELAY_US æŽ§åˆ¶æ¯ä½ä¹‹é—´çš„å»¶è¿Ÿ (Î¼s),
+ *     2Î¼s â†’ ~250kHz, 1Î¼s â†’ ~500kHzã€‚
+ *     INA229 æœ€é«˜æ”¯æŒ ~10MHz, ä½†è½¯ä»¶ SPI å— MCU é€Ÿåº¦é™åˆ¶ã€‚
+ */
+
+#ifndef __SOFT_SPI_H__
+#define __SOFT_SPI_H__
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "main.h"
+#include <stdint.h>
+
+/*===========================================================================
+ * ç”¨æˆ·é…ç½®åŒº (æ ¹æ®å®žé™…ç¡¬ä»¶è¿žæŽ¥ä¿®æ”¹ä»¥ä¸‹å®)
+ *===========================================================================*/
+
+/** @brief SCK æ—¶é’Ÿå¼•è„š - GPIO ç«¯å£ (PB0 = INA_SCLK) */
+#define SOFT_SPI_SCLK_PORT          GPIOB
+/** @brief SCK æ—¶é’Ÿå¼•è„š - GPIO å¼•è„šå· */
+#define SOFT_SPI_SCLK_PIN           GPIO_PIN_0
+
+/** @brief MOSI ä¸»å‡ºä»Žå…¥å¼•è„š - GPIO ç«¯å£ (PA9 = INA_MOSI) */
+#define SOFT_SPI_MOSI_PORT          GPIOA
+/** @brief MOSI ä¸»å‡ºä»Žå…¥å¼•è„š - GPIO å¼•è„šå· */
+#define SOFT_SPI_MOSI_PIN           GPIO_PIN_9
+
+/** @brief MISO ä¸»å…¥ä»Žå‡ºå¼•è„š - GPIO ç«¯å£ (PB1 = INA_MISO) */
+#define SOFT_SPI_MISO_PORT          GPIOB
+/** @brief MISO ä¸»å…¥ä»Žå‡ºå¼•è„š - GPIO å¼•è„šå· */
+#define SOFT_SPI_MISO_PIN           GPIO_PIN_1
+
+/** @brief CS ç‰‡é€‰å¼•è„š - GPIO ç«¯å£ (PA10 = INA_CS) */
+#define SOFT_SPI_CS_PORT            GPIOA
+/** @brief CS ç‰‡é€‰å¼•è„š - GPIO å¼•è„šå· */
+#define SOFT_SPI_CS_PIN             GPIO_PIN_10
+
+/**
+ * @brief SPI æ—¶é’Ÿæžæ€§ (CPOL)
+ *   0 = ç©ºé—²æ—¶ SCK ä¸ºä½Žç”µå¹³
+ *   1 = ç©ºé—²æ—¶ SCK ä¸ºé«˜ç”µå¹³
+ */
+#define SOFT_SPI_CPOL               0
+
+/**
+ * @brief SPI æ—¶é’Ÿç›¸ä½ (CPHA)
+ *   0 = ç¬¬ä¸€ä¸ªæ—¶é’Ÿè¾¹æ²¿é‡‡æ ·
+ *   1 = ç¬¬äºŒä¸ªæ—¶é’Ÿè¾¹æ²¿é‡‡æ ·
+ */
+#define SOFT_SPI_CPHA               1
+
+/**
+ * @brief æ¯ä½ä¹‹é—´çš„å»¶è¿Ÿ (Î¼s)
+ *   æŽ§åˆ¶ SPI æ—¶é’Ÿé¢‘çŽ‡: f_SCK â‰ˆ 1 / (DELAY_US Ã— 3) Hz
+ *   ä¾‹å¦‚ DELAY_US=2 â†’ f_SCK â‰ˆ 166kHz
+ */
+#define SOFT_SPI_DELAY_US           2
+
+/*===========================================================================
+ * å…¬å…±å‡½æ•°å£°æ˜Ž
+ *===========================================================================*/
+
+/**
+ * @brief  è½¯ä»¶ SPI å¾®ç§’çº§å»¶æ—¶
+ * @param  us å»¶æ—¶æ—¶é—´ (Î¼s)
+ * @note   ä½¿ç”¨ SystemCoreClock è¿›è¡Œç²—ç•¥å»¶æ—¶, ä¸ä¾èµ–å®šæ—¶å™¨
+ */
+void     Soft_SPI_DelayUs(uint32_t us);
+
+/**
+ * @brief  è½¯ä»¶ SPI åˆå§‹åŒ–
+ * @note   å°†æ‰€æœ‰å¼•è„šè®¾ä¸ºåˆå§‹ç”µå¹³:
+ *         SCK=ä½Ž, MOSI=ä½Ž, CS=é«˜ (ç©ºé—²)
+ *         å¦‚éœ€ HAL åº“ GPIO åˆå§‹åŒ–, è¯·åœ¨å¤–éƒ¨å®Œæˆæˆ–å–æ¶ˆæ³¨é‡Šå†…éƒ¨ä»£ç 
+ */
+void     Soft_SPI_Init(void);
+
+/**
+ * @brief  æ‹‰ä½Žç‰‡é€‰ (CS=0), å¼€å§‹ SPI ä¼ è¾“
+ * @note   æ‹‰ä½Žå‰åŽå„æœ‰ 1Î¼s å»¶æ—¶, ç¡®ä¿æ»¡è¶³ INA229 çš„ CS å»ºç«‹/ä¿æŒæ—¶é—´
+ */
+void     Soft_SPI_CS_Low(void);
+
+/**
+ * @brief  æ‹‰é«˜ç‰‡é€‰ (CS=1), ç»“æŸ SPI ä¼ è¾“
+ * @note   æ‹‰é«˜å‰åŽå„æœ‰ 1Î¼s å»¶æ—¶
+ */
+void     Soft_SPI_CS_High(void);
+
+/**
+ * @brief  å•å­—èŠ‚ SPI ä¼ è¾“ (åŒæ—¶æ”¶å‘)
+ * @param  tx å‘é€çš„ 8-bit æ•°æ® (MSB first)
+ * @return æŽ¥æ”¶åˆ°çš„ 8-bit æ•°æ®
+ * @note   å‘é€å’ŒæŽ¥æ”¶åŒæ—¶è¿›è¡Œ, MSB first
+ */
+uint8_t  Soft_SPI_Transfer(uint8_t tx);
+
+/**
+ * @brief  å¤šå­—èŠ‚ SPI ä¼ è¾“ (å¯é€‰æ”¶å‘)
+ * @param  tx  å‘é€ç¼“å†²åŒºæŒ‡é’ˆ (å¯ä¸º NULL, åˆ™å…¨éƒ¨å‘é€ 0x00)
+ * @param  rx  æŽ¥æ”¶ç¼“å†²åŒºæŒ‡é’ˆ (å¯ä¸º NULL, åˆ™ä¸¢å¼ƒæŽ¥æ”¶æ•°æ®)
+ * @param  len ä¼ è¾“å­—èŠ‚æ•°
+ * @note   å‘é€å’ŒæŽ¥æ”¶åŒæ—¶è¿›è¡Œ, æ¯å­—èŠ‚ MSB first
+ */
+void     Soft_SPI_TransferBuf(const uint8_t *tx, uint8_t *rx, uint16_t len);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* __SOFT_SPI_H__ */

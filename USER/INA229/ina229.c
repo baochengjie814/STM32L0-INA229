@@ -1,622 +1,622 @@
-/**
- * @file    ina229.c
- * @brief   INA229 ¹¦ÂÊ¼à¿ØÆ÷ SPI Çı¶¯ÊµÏÖ
- *
- * @author  (ÄãµÄÃû×Ö)
- * @date    (ÈÕÆÚ)
- *
- * @note    ½öÒÀÀµ "ina229.h"¡¢"soft_spi.h" ºÍ <system.h>
- *          ËùÓĞÈí SPI µ×²ãº¯ÊıÔÚ soft_spi.c ÖĞÊµÏÖ
- *
- *   SPI Í¨ĞÅ¸ñÊ½ËµÃ÷:
- *   Ã¿´Î SPI ´«ÊäÒÔ CS À­µÍ¿ªÊ¼, CS À­¸ß½áÊø¡£
- *   MOSI Ê××Ö½ÚÎªÃüÁî×Ö½Ú: [ADDR5..ADDR0 | 0 | R/W]
- *   MISO Ê××Ö½ÚÎª×´Ì¬×Ö½Ú (º¬ ALRT/CRDY/MATHOF/MEMSTAT µÈ±êÖ¾)¡£
- *
- *   ¼Ä´æÆ÷Êı¾İ¿í¶È:
- *     16-bit: ¹²Ğè 3 ×Ö½Ú (1 ÃüÁî + 2 Êı¾İ)
- *     24-bit: ¹²Ğè 4 ×Ö½Ú (1 ÃüÁî + 3 Êı¾İ), ÓĞĞ§Êı¾İÔÚµÍ 20-bit
- *     40-bit: ¹²Ğè 6 ×Ö½Ú (1 ÃüÁî + 5 Êı¾İ), ÓĞĞ§Êı¾İÔÚµÍ 40-bit
- */
-
-#include "ina229.h"
-#include "soft_spi.h"
-#include <system.h>
-#include <string.h>   /* memset() */
-
-/*===========================================================================
- * ÄÚ²¿³£Á¿
- *===========================================================================*/
-
-/** @brief SPI ÃüÁî×Ö½ÚÖĞµÄ¶Á/Ğ´±êÖ¾Î» */
-#define INA229_CMD_READ      0x01  /**< ¶Á²Ù×÷: ÃüÁî×Ö½Ú×îµÍÎ» = 1 */
-#define INA229_CMD_WRITE     0x00  /**< Ğ´²Ù×÷: ÃüÁî×Ö½Ú×îµÍÎ» = 0 */
-
-/**
- * @brief SHUNT_CAL ¼ÆËã¹«Ê½ÖĞµÄ³£ÊıÒò×Ó
- *
- *   Êı¾İÊÖ²á¹«Ê½: SHUNT_CAL = 13107200000 ¡Á Rshunt ¡Á Imax
- *   ÆäÖĞ:
- *     - 13107200000 = 0x30D400000 ¡Ö 1.31072 ¡Á 10^10
- *     - Rshunt µ¥Î»: ¦¸
- *     - Imax   µ¥Î»: A
- *
- *   Èô¼ÆËã½á¹û > 32767 (0x7FFF), Ôò³ıÒÔ 4 ÖØĞÂËõ·Å,
- *   ÉÏÏŞ 32767 (15-bit ÎŞ·ûºÅ×î´óÖµ)¡£
- */
-#define INA229_SHUNT_CAL_FACTOR       13107200000.0f
-#define INA229_SHUNT_CAL_DIVISOR      4.0f
-#define INA229_SHUNT_CAL_MAX_FLOAT    32767.0f
-
-/**
- * @brief 24-bit ¼Ä´æÆ÷ÖĞÓĞĞ§Êı¾İÎ»Êı
- *
- *   ¶ÔÓÚ VSHUNT/CURRENT: 20-bit ADC Êı¾İ, ×ó¶ÔÆëÔÚ 24-bit Ö¡ÖĞ,
- *   ĞèÓÒÒÆ 4-bit µÃµ½Êµ¼ÊÖµ¡£
- *   ¶ÔÓÚ VBUS/POWER: 20-bit Êı¾İ, ÎŞ·ûºÅ¡£
- */
-#define INA229_24BIT_DATA_SHIFT       4
-
-/**
- * @brief 40-bit ¼Ä´æÆ÷·ûºÅÎ»ÑÚÂë (CHARGE ¼Ä´æÆ÷)
- *
- *   CHARGE Îª 40-bit ¶ş½øÖÆ²¹Âë, ·ûºÅÎ»ÔÚ bit39¡£
- *   À©Õ¹µ½ int64_t Ê±, Èô bit39=1, Ôò¸ß 24-bit È«²¿Ìî³ä 1¡£
- */
-#define INA229_CHARGE_SIGN_BIT        0x8000000000ULL
-#define INA229_CHARGE_SIGN_EXTEND     0xFFFFFF0000000000ULL
-
-/*===========================================================================
- * ÄÚ²¿¸¨Öúº¯Êı
- *===========================================================================*/
-
-/**
- * @brief  ¹¹½¨ SPI ÃüÁî×Ö½Ú
- * @param  addr ¼Ä´æÆ÷µØÖ· (6-bit, 0x00~0x3F)
- * @param  rw   ¶Á/Ğ´±êÖ¾: INA229_CMD_READ »ò INA229_CMD_WRITE
- * @return 8-bit ÃüÁî×Ö½Ú
- *
- *   ÃüÁî×Ö½ÚÎ»²¼¾Ö (MSB¡úLSB):
- *     BIT[7:2] = ADDR[5:0]  (6-bit ¼Ä´æÆ÷µØÖ·)
- *     BIT[1]   = 0          (±£Áô, Ê¼ÖÕÎª 0)
- *     BIT[0]   = R/W        (0=Ğ´, 1=¶Á)
- *
- *   µÈĞ§¹«Ê½: cmd = (addr << 2) | rw
- */
-static inline uint8_t _BuildCmd(uint8_t addr, uint8_t rw)
-{
-    return (uint8_t)(((addr & 0x3F) << 2) | (rw & 0x01));
-}
-
-/**
- * @brief  24-bit ·ûºÅÀ©Õ¹Îª 32-bit (ÓÃÓÚ VSHUNT/CURRENT µÈÓĞ·ûºÅ¼Ä´æÆ÷)
- * @param  raw24 24-bit Ô­Ê¼Öµ (bit23 Îª·ûºÅÎ», ¶ş½øÖÆ²¹Âë)
- * @return ·ûºÅÀ©Õ¹ºóµÄ 32-bit ÓĞ·ûºÅÖµ
- *
- *   Àı: raw24=0x800000 ¡ú ·ûºÅÎ»=1 ¡ú ·µ»Ø 0xFF800000 (int32_t = -8388608)
- *       raw24=0x7FFFFF ¡ú ·ûºÅÎ»=0 ¡ú ·µ»Ø 0x007FFFFF (int32_t = +8388607)
- */
-static inline int32_t _SignExtend24(uint32_t raw24)
-{
-    if (raw24 & 0x800000UL) {
-        /* ·ûºÅÎ»Îª 1, ½«¸ß 8-bit Ìî³äÎª 1 */
-        return (int32_t)(raw24 | 0xFF000000UL);
-    }
-    return (int32_t)raw24;
-}
-
-/*===========================================================================
- * ³õÊ¼»¯ÓëÏµÍ³¿ØÖÆ
- *===========================================================================*/
-
-/**
- * @brief  ³õÊ¼»¯ INA229 Çı¶¯
- *
- *  ³õÊ¼»¯Á÷³Ì:
- *    1. ³õÊ¼»¯Èí¼ş SPI Òı½Å (Soft_SPI_Init)
- *    2. ·¢ËÍÈí¼ş¸´Î»ÃüÁî
- *    3. ¶ÁÈ¡Æ÷¼ş ID ÑéÖ¤Í¨ĞÅÕı³£ (ÆÚÍû 0x2291)
- *    4. ÅäÖÃÄ¬ÈÏ ADC ²ÎÊı: Á¬ĞøÄ£Ê½, È«²¿Í¨µÀ, 1052¦Ìs×ª»»Ê±¼ä, 16´ÎÆ½¾ù
- *    5. ¸ù¾İ·ÖÁ÷µç×èºÍ×î´óÔ¤ÆÚµçÁ÷¼ÆËã²¢Ğ´Èë SHUNT_CAL
- *
- * @param  rshunt_ohm ·ÖÁ÷µç×èÖµ (¦¸)
- * @param  i_max_a    ×î´óÔ¤ÆÚµçÁ÷ (A)
- * @retval true  ³õÊ¼»¯³É¹¦
- * @retval false Æ÷¼ş ID ²»Æ¥Åä, SPI Í¨ĞÅÊ§°Ü»òÆ÷¼şÎ´Á¬½Ó
- */
-bool INA229_Init(float rshunt_ohm, float i_max_a)
-{
-    uint16_t dev_id;
-    float    scal;
-
-    /* 1. ³õÊ¼»¯Èí¼ş SPI Òı½Å */
-    Soft_SPI_Init();
-
-    /* 2. Èí¼ş¸´Î»Æ÷¼ş */
-    INA229_Reset();
-
-    /* 3. ¶ÁÈ¡Æ÷¼ş ID ÑéÖ¤Í¨ĞÅ (INA229 µÄ DEVICE_ID = 0x2291) */
-    dev_id = INA229_ReadDeviceID();
-    if (dev_id != 0x2291) {
-        return false;
-    }
-
-    /* 4. Ğ´ÈëÄ¬ÈÏ ADC ÅäÖÃ:
-     *    - Á¬ĞøÄ£Ê½, È«²¿Í¨µÀ (VBUS + VSHUNT + TEMP)
-     *    - ×ª»»Ê±¼ä: 1052¦Ìs (ÔëÉùÓëËÙ¶ÈµÄÕÛÖĞÑ¡Ôñ)
-     *    - 16 ´ÎÆ½¾ùÖµ (½øÒ»²½½µµÍÔëÉù)
-     */
-    INA229_WriteReg16(INA229_REG_ADC_CONFIG,
-        INA229_ADC_MODE_CONT_ALL |
-        (INA229_CT_1052US << INA229_ADC_VBUSCT_Pos) |
-        (INA229_CT_1052US << INA229_ADC_VSHCT_Pos) |
-        (INA229_CT_1052US << INA229_ADC_VTCT_Pos) |
-        INA229_AVG_16);
-
-    /* 5. ¼ÆËã²¢Ğ´Èë SHUNT_CAL Öµ
-     *
-     *    SHUNT_CAL = 13107200000 ¡Á Rshunt ¡Á Imax
-     *
-     *    Èô½á¹û > 32767 (15-bit ×î´óÖµ), Ôò³ıÒÔ 4 ²¢Ç¯Î»µ½ 32767¡£
-     *    +0.5 ÓÃÓÚËÄÉáÎåÈëµ½×î½üÕûÊı¡£
-     *
-     *    Ê¾Àı: Rshunt=0.001¦¸, Imax=10A
-     *      scal = 13107200000 ¡Á 0.001 ¡Á 10 = 131072000
-     *      scal > 32767 ¡ú scal = 32768000 ¡ú ÈÔ > 32767 ¡ú Ç¯Î» 32767
-     */
-    scal = INA229_SHUNT_CAL_FACTOR * rshunt_ohm * i_max_a;
-    if (scal > INA229_SHUNT_CAL_MAX_FLOAT) scal /= INA229_SHUNT_CAL_DIVISOR;
-    if (scal > INA229_SHUNT_CAL_MAX_FLOAT) scal = INA229_SHUNT_CAL_MAX_FLOAT;
-    INA229_SetShuntCal((uint16_t)(scal + 0.5f));
-
-    return true;
-}
-
-/**
- * @brief  Èí¼ş¸´Î» INA229
- * @note   Ğ´ CONFIG[RST]=1, È»ºóµÈ´ı 1ms ÈÃÆ÷¼şÍê³É¸´Î»ĞòÁĞ¡£
- *         ¸´Î»ºóËùÓĞ¼Ä´æÆ÷»Ö¸´Ä¬ÈÏÖµ¡£
- */
-void INA229_Reset(void)
-{
-    INA229_WriteReg16(INA229_REG_CONFIG, INA229_CONFIG_RST);
-    Soft_SPI_DelayUs(1000);  /* µÈ´ı 1ms ÒÔÈ·±£¸´Î»Íê³É */
-}
-
-/**
- * @brief  Çå³ıµçÄÜ/µçºÉÀÛ¼ÓÆ÷
- * @note   Ğ´ CONFIG[RSTACC]=1, RSTACC Î»»á×Ô¶¯Çå³ı, ÎŞĞèÊÖ¶¯»ØĞ´¡£
- */
-void INA229_ClearAccumulators(void)
-{
-    INA229_WriteReg16(INA229_REG_CONFIG, INA229_CONFIG_RSTACC);
-}
-
-/*===========================================================================
- * µ×²ã¼Ä´æÆ÷¶ÁĞ´
- *===========================================================================*/
-
-/**
- * @brief  ¶ÁÈ¡ 16-bit ¼Ä´æÆ÷
- *
- *   SPI Ö¡: | CMD(1B) | D[15:8](1B) | D[7:0](1B) |
- *   ·¢ËÍ 3 ×Ö½Ú (ÃüÁî + 2 Ìî³ä), ½ÓÊÕ 3 ×Ö½Ú (×´Ì¬ + 2 Êı¾İ)¡£
- *   ×¢Òâ: Ê×¸ö½ÓÊÕ×Ö½ÚÎª×´Ì¬×Ö½Ú, ´Ë´¦¶ªÆú; Êı¾İÔÚ rx[1] ºÍ rx[2]¡£
- *
- * @param  addr ¼Ä´æÆ÷µØÖ· (0x00~0x3F)
- * @return 16-bit ¼Ä´æÆ÷Öµ
- */
-uint16_t INA229_ReadReg16(uint8_t addr)
-{
-    uint8_t tx[3], rx[3];
-
-    tx[0] = _BuildCmd(addr, INA229_CMD_READ);
-    tx[1] = tx[2] = 0x00;  /* Ìî³ä×Ö½Ú, MOSI ËÍ³ö 0 */
-
-    Soft_SPI_CS_Low();
-    Soft_SPI_TransferBuf(tx, rx, 3);
-    Soft_SPI_CS_High();
-
-    /* rx[0] = ×´Ì¬×Ö½Ú (ºöÂÔ)
-     * rx[1] = D[15:8], rx[2] = D[7:0] */
-    return ((uint16_t)rx[1] << 8) | rx[2];
-}
-
-/**
- * @brief  ¶ÁÈ¡ 24-bit ¼Ä´æÆ÷ (VSHUNT, VBUS, CURRENT, POWER)
- *
- *   SPI Ö¡: | CMD(1B) | D[23:16](1B) | D[15:8](1B) | D[7:0](1B) |
- *   ·¢ËÍ 4 ×Ö½Ú, ½ÓÊÕ 4 ×Ö½Ú¡£
- *   Êµ¼ÊÓĞĞ§Êı¾İÎª 20-bit, ×ó¶ÔÆëÔÚ 24-bit Ö¡µÄ bit[23:4],
- *   µÍ 4-bit Ê¼ÖÕÎª 0¡£
- *
- * @param  addr ¼Ä´æÆ÷µØÖ·
- * @return 32-bit Ô­Ê¼Öµ (¸ß 8-bit Îª 0, ÓĞĞ§Êı¾İÔÚµÍ 24-bit)
- */
-uint32_t INA229_ReadReg24(uint8_t addr)
-{
-    uint8_t tx[4], rx[4];
-
-    tx[0] = _BuildCmd(addr, INA229_CMD_READ);
-    tx[1] = tx[2] = tx[3] = 0x00;
-
-    Soft_SPI_CS_Low();
-    Soft_SPI_TransferBuf(tx, rx, 4);
-    Soft_SPI_CS_High();
-
-    /* rx[0] = ×´Ì¬×Ö½Ú, rx[1..3] = 24-bit Êı¾İ */
-    return ((uint32_t)rx[1] << 16) | ((uint32_t)rx[2] << 8) | rx[3];
-}
-
-/**
- * @brief  ¶ÁÈ¡ 40-bit ¼Ä´æÆ÷ (ENERGY, CHARGE)
- *
- *   SPI Ö¡: | CMD(1B) | D[39:32](1B) | ... | D[7:0](1B) |
- *   ·¢ËÍ 6 ×Ö½Ú, ½ÓÊÕ 6 ×Ö½Ú¡£
- *   Êµ¼ÊÓĞĞ§Êı¾İÎª 40-bit, ´æ·ÅÔÚ uint64_t µÍ 40-bit¡£
- *
- * @param  addr ¼Ä´æÆ÷µØÖ·
- * @return 64-bit Ô­Ê¼Öµ (¸ß 24-bit Îª 0, ÓĞĞ§Êı¾İÔÚµÍ 40-bit)
- */
-uint64_t INA229_ReadReg40(uint8_t addr)
-{
-    uint8_t tx[6], rx[6];
-
-    tx[0] = _BuildCmd(addr, INA229_CMD_READ);
-    tx[1] = tx[2] = tx[3] = tx[4] = tx[5] = 0x00;
-
-    Soft_SPI_CS_Low();
-    Soft_SPI_TransferBuf(tx, rx, 6);
-    Soft_SPI_CS_High();
-
-    /* rx[0] = ×´Ì¬×Ö½Ú, rx[1..5] = 40-bit Êı¾İ */
-    return ((uint64_t)rx[1] << 32)
-         | ((uint64_t)rx[2] << 24)
-         | ((uint64_t)rx[3] << 16)
-         | ((uint64_t)rx[4] << 8)
-         |  (uint64_t)rx[5];
-}
-
-/**
- * @brief  Ğ´Èë 16-bit ¼Ä´æÆ÷
- *
- *   SPI Ö¡: | CMD(1B) | D[15:8](1B) | D[7:0](1B) |
- *   ·¢ËÍ 3 ×Ö½Ú, ½ÓÊÕÄÚÈİºöÂÔ (MISO ·µ»Ø¾É¼Ä´æÆ÷Öµ, ´Ë´¦¶ªÆú)¡£
- *
- * @param  addr ¼Ä´æÆ÷µØÖ· (0x00~0x3F)
- * @param  data 16-bit Êı¾İ
- */
-void INA229_WriteReg16(uint8_t addr, uint16_t data)
-{
-    uint8_t tx[3];
-
-    tx[0] = _BuildCmd(addr, INA229_CMD_WRITE);
-    tx[1] = (uint8_t)(data >> 8);     /* ¸ß×Ö½Ú D[15:8] */
-    tx[2] = (uint8_t)(data & 0xFF);   /* µÍ×Ö½Ú D[7:0]  */
-
-    Soft_SPI_CS_Low();
-    Soft_SPI_TransferBuf(tx, NULL, 3);  /* rx=NULL, ¶ªÆú MISO ·µ»Ø */
-    Soft_SPI_CS_High();
-}
-
-/*===========================================================================
- * ²âÁ¿Öµ¶ÁÈ¡ (¹¤³Ìµ¥Î»×ª»»)
- *===========================================================================*/
-
-/**
- * @brief  ¶ÁÈ¡·ÖÁ÷µçÑ¹ (VSHUNT), ×ª»»Îª·üÌØ
- *
- *   ×ª»»Á÷³Ì:
- *     1. ¶ÁÈ¡ 24-bit Ô­Ê¼Öµ
- *     2. ·ûºÅÀ©Õ¹µ½ 32-bit (VSHUNT Îª¶ş½øÖÆ²¹Âë)
- *     3. ÓÒÒÆ 4-bit (µÍ 4-bit Ê¼ÖÕÎª 0)
- *     4. ³ËÒÔ¶ÔÓ¦ ADCRANGE µÄ LSB Öµ
- *
- * @param  adc_range ADCRANGE Î»Öµ (0=¡À163.84mV/312.5nV, 1=¡À40.96mV/78.125nV)
- * @return ·ÖÁ÷µçÑ¹ (V)
- */
-float INA229_ReadVShunt(uint8_t adc_range)
-{
-    /* 1. ¶ÁÔ­Ê¼Öµ, ·ûºÅÀ©Õ¹, 2. ÓÒÒÆ 4-bit µÃµ½ 20-bit ADC Êı¾İ */
-    int32_t val = _SignExtend24(INA229_ReadReg24(INA229_REG_VSHUNT)) >> INA229_24BIT_DATA_SHIFT;
-
-    /* 3. ³ËÒÔ LSB, Á¿³Ì²»Í¬ LSB ²»Í¬ */
-    if (adc_range) {
-        return (float)val * INA229_VSHUNT_LSB_ADCRANGE1;  /* 78.125 nV/LSB */
-    } else {
-        return (float)val * INA229_VSHUNT_LSB_ADCRANGE0;  /* 312.5 nV/LSB  */
-    }
-}
-
-/**
- * @brief  ¶ÁÈ¡×ÜÏßµçÑ¹ (VBUS), ×ª»»Îª·üÌØ
- *
- *   VBUS ÎªÎŞ·ûºÅ 20-bit Êı¾İ, Á¿³Ì 0~85V¡£
- *
- * @return ×ÜÏßµçÑ¹ (V)
- */
-float INA229_ReadVBus(void)
-{
-    /* ¶Á 24-bit, ÓÒÒÆ 4-bit, È¡µÍ 20-bit ÓëÑÚÂë */
-    uint32_t val = (INA229_ReadReg24(INA229_REG_VBUS) >> INA229_24BIT_DATA_SHIFT) & 0xFFFFFUL;
-    return (float)val * INA229_VBUS_LSB;  /* 195.3125 ¦ÌV/LSB */
-}
-
-/**
- * @brief  ¶ÁÈ¡Ğ¾Æ¬ÎÂ¶È (DIETEMP), ×ª»»ÎªÉãÊÏ¶È
- *
- *   DIETEMP Îª 16-bit ¶ş½øÖÆ²¹Âë, LSB = 7.8125 m¡ãC¡£
- *   Á¿³Ì: -256¡ãC ~ +256¡ãC (Êµ¼ÊĞ¾Æ¬¹¤×÷·¶Î§Ô¼ -40¡ãC ~ +125¡ãC)¡£
- *
- * @return Ğ¾Æ¬ÎÂ¶È (¡ãC)
- */
-float INA229_ReadTemperature(void)
-{
-    /* ×ª»»ÎªÓĞ·ûºÅ 16-bit, ÔÙ³ËÒÔ LSB */
-    return (float)((int16_t)INA229_ReadReg16(INA229_REG_DIETEMP)) * INA229_TEMP_LSB;
-}
-
-/**
- * @brief  ¶ÁÈ¡µçÁ÷ (CURRENT) Ô­Ê¼Öµ
- *
- *   µçÁ÷Í¨¹ı VSHUNT / Rshunt ¼ÆËã, INA229 ÄÚ²¿×Ô¶¯Íê³É:
- *     CURRENT = VSHUNT ¡Á SHUNT_CAL / 4
- *
- *   CURRENT Îª 20-bit ¶ş½øÖÆ²¹Âë¡£
- *
- * @param  shunt_cal_value SHUNT_CAL ¼Ä´æÆ÷Öµ
- *         (TODO: µ±Ç°Î´ÊµÏÖ¹¤³Ìµ¥Î»»»Ëã, ±£Áô²ÎÊıÓÃÓÚÎ´À´À©Õ¹)
- * @return µçÁ÷Ô­Ê¼Öµ (Ğè³ıÒÔ SHUNT_CAL µÃµ½°²Åà)
- */
-float INA229_ReadCurrent(uint16_t shunt_cal_value)
-{
-    int32_t val = _SignExtend24(INA229_ReadReg24(INA229_REG_CURRENT)) >> INA229_24BIT_DATA_SHIFT;
-
-    /* TODO: Ê¹ÓÃ shunt_cal_value ½«Ô­Ê¼Öµ×ª»»Îª°²Åà:
-     *   I(A) = val / shunt_cal_value
-     *   µ±Ç°Ö±½Ó·µ»ØÔ­Ê¼Öµ, ÓÉµ÷ÓÃÕß×ÔĞĞ»»Ëã¡£
-     */
-    (void)shunt_cal_value;  /* ÏÔÊ½±ê¼Ç²ÎÊıÎ´Ê¹ÓÃ, Ïû³ı±àÒëÆ÷¾¯¸æ */
-    return (float)val;
-}
-
-/**
- * @brief  ¶ÁÈ¡¹¦ÂÊ (POWER) Ô­Ê¼Öµ
- *
- *   ¹¦ÂÊÍ¨¹ı VSHUNT ¡Á VBUS / Rshunt ¼ÆËã, INA229 ÄÚ²¿×Ô¶¯Íê³É:
- *     POWER = CURRENT ¡Á VBUS / 32
- *
- *   POWER Îª 24-bit ÎŞ·ûºÅÖµ (µ« bit23 ÔÚÄ³Ğ©Ìõ¼şÏÂ¿ÉÎª·ûºÅÎ»)¡£
- *
- * @param  shunt_cal_value SHUNT_CAL ¼Ä´æÆ÷Öµ
- *         (TODO: µ±Ç°Î´ÊµÏÖ¹¤³Ìµ¥Î»»»Ëã, ±£Áô²ÎÊıÓÃÓÚÎ´À´À©Õ¹)
- * @return ¹¦ÂÊÔ­Ê¼Öµ (Ğè³ıÒÔ 32¡ÁSHUNT_CAL µÃµ½ÍßÌØ)
- */
-float INA229_ReadPower(uint16_t shunt_cal_value)
-{
-    int32_t val = (int32_t)(INA229_ReadReg24(INA229_REG_POWER) & 0xFFFFFFUL);
-
-    /* TODO: Ê¹ÓÃ shunt_cal_value ½«Ô­Ê¼Öµ×ª»»ÎªÍßÌØ:
-     *   P(W) = val / (32 ¡Á shunt_cal_value)
-     *   µ±Ç°Ö±½Ó·µ»ØÔ­Ê¼Öµ, ÓÉµ÷ÓÃÕß×ÔĞĞ»»Ëã¡£
-     */
-    (void)shunt_cal_value;
-    return (float)val;
-}
-
-/**
- * @brief  Ò»´ÎĞÔ¶ÁÈ¡ËùÓĞÖ÷Òª²âÁ¿Êı¾İ
- *
- *   ÒÀ´Î¶ÁÈ¡ VSHUNT, VBUS, TEMP, CURRENT, POWER, ENERGY, CHARGE,
- *   Ìî³äµ½ INA229_Data_t ½á¹¹Ìå¡£
- *
- *   @warning ¶ÁÈ¡ÆÚ¼äÊı¾İ²ÉÑùÊ±¿Ì²»Í¬, ¸÷Í¨µÀÖ®¼ä¿ÉÄÜÓĞÎ¢Ğ¡Ê±¼ä²î¡£
- *
- * @param  data      Êä³ö½á¹¹ÌåÖ¸Õë (NULL Ê±Ö±½Ó·µ»Ø)
- * @param  adc_range ADCRANGE Î»Öµ
- * @param  shunt_cal SHUNT_CAL ¼Ä´æÆ÷Öµ
- */
-void INA229_ReadAll(INA229_Data_t *data, uint8_t adc_range, uint16_t shunt_cal)
-{
-    if (!data) return;
-
-    /* ÇåÁã½á¹¹Ìå, ±ÜÃâ²ĞÁôÊı¾İ¸ÉÈÅ */
-    memset(data, 0, sizeof(*data));
-
-    data->vshunt      = INA229_ReadVShunt(adc_range);
-    data->vbus        = INA229_ReadVBus();
-    data->temperature = INA229_ReadTemperature();
-    data->current     = INA229_ReadCurrent(shunt_cal);
-    data->power       = INA229_ReadPower(shunt_cal);
-    data->energy      = INA229_ReadEnergy();
-    data->charge      = INA229_ReadCharge();
-}
-
-/**
- * @brief  ¶ÁÈ¡µçÄÜÀÛ»ıÖµ (ENERGY)
- * @return 40-bit µçÄÜÔ­Ê¼Öµ (LSB, ÎŞ·ûºÅ)
- * @note   LSB = 3.2 ¡Á SHUNT_CAL (¦ÌJ), ĞèÍâ²¿»»ËãÎª½¹¶ú
- */
-uint64_t INA229_ReadEnergy(void)
-{
-    return INA229_ReadReg40(INA229_REG_ENERGY);
-}
-
-/**
- * @brief  ¶ÁÈ¡µçºÉÀÛ»ıÖµ (CHARGE), º¬ 40-bit ·ûºÅÀ©Õ¹
- *
- *   CHARGE Îª 40-bit ¶ş½øÖÆ²¹Âë, ·ûºÅÎ»ÔÚ bit39¡£
- *   ÏÈ¶ÁÈ¡ 40-bit Ô­Ê¼Öµ, ÔÙÀ©Õ¹µ½ int64_t¡£
- *
- * @return 40-bit µçºÉÔ­Ê¼Öµ (LSB, ¶ş½øÖÆ²¹Âë)
- * @note   LSB = SHUNT_CAL (¦ÌC), ĞèÍâ²¿»»ËãÎª¿âÂØ
- */
-int64_t INA229_ReadCharge(void)
-{
-    uint64_t raw = INA229_ReadReg40(INA229_REG_CHARGE);
-
-    /* ·ûºÅÀ©Õ¹: Èô bit39=1, Ôò¸ß 24-bit È«²¿Ìî³ä 1 */
-    if (raw & INA229_CHARGE_SIGN_BIT) {
-        return (int64_t)(raw | INA229_CHARGE_SIGN_EXTEND);
-    }
-    return (int64_t)raw;
-}
-
-/**
- * @brief  ¼ì²é ADC ×ª»»ÊÇ·ñÍê³É
- *
- *   Í¨¹ı¶ÁÈ¡ DIAG_ALRT[CNVR] Î» (bit14) ÅĞ¶Ï¡£
- *   Á¬ĞøÄ£Ê½ÏÂ, ¸ÃÎ»ÔÚÃ¿¸ö×ª»»ÖÜÆÚ½áÊøÊ±·­×ª¡£
- *
- * @retval true  ×ª»»Íê³É, ¸÷Í¨µÀÊı¾İÒÑ¸üĞÂ
- * @retval false ×ª»»½øĞĞÖĞ
- */
-bool INA229_IsConversionReady(void)
-{
-    /* DIAG_ALRT bit14 = CNVR (×ª»»¾ÍĞ÷) */
-    return (INA229_ReadReg16(INA229_REG_DIAG_ALRT) & INA229_DIAG_ALRT_CNVR) ? true : false;
-}
-
-/**
- * @brief  ¶ÁÈ¡Õï¶Ï/±¨¾¯¼Ä´æÆ÷ÍêÕûÖµ
- * @return DIAG_ALRT ¼Ä´æÆ÷ 16-bit Ô­Ê¼Öµ
- */
-uint16_t INA229_ReadDiagAlrt(void)
-{
-    return INA229_ReadReg16(INA229_REG_DIAG_ALRT);
-}
-
-/*===========================================================================
- * ÅäÖÃ API (¶Á-ĞŞ¸Ä-Ğ´Ä£Ê½)
- *===========================================================================*/
-
-/**
- * @brief  ÉèÖÃ ADC Á¿³Ì
- * @param  range 0=¡À163.84mV (Ä¬ÈÏ), ·ÇÁã=¡À40.96mV
- */
-void INA229_SetADCRange(uint8_t range)
-{
-    uint16_t cfg = INA229_ReadReg16(INA229_REG_CONFIG);
-    cfg &= ~INA229_CONFIG_ADCRANGE;       /* Çå³ıÔ­ ADCRANGE Î» */
-    if (range) cfg |= INA229_CONFIG_ADCRANGE;  /* ÉèÖÃĞÂÖµ */
-    INA229_WriteReg16(INA229_REG_CONFIG, cfg);
-}
-
-/**
- * @brief  ÉèÖÃ ADC ¹¤×÷Ä£Ê½
- * @param  mode Ä£Ê½Öµ (Èç INA229_ADC_MODE_CONT_ALL)
- */
-void INA229_SetMode(uint16_t mode)
-{
-    uint16_t cfg = INA229_ReadReg16(INA229_REG_ADC_CONFIG);
-    /* Çå³ıÔ­ MODE ×Ö¶Î, Ğ´ÈëĞÂÖµ (Ö»±£ÁôµÍ 4-bit Ä£Ê½±àÂë) */
-    cfg = (cfg & ~INA229_ADC_MODE_Msk) | (mode & INA229_ADC_MODE_Msk);
-    INA229_WriteReg16(INA229_REG_ADC_CONFIG, cfg);
-}
-
-/**
- * @brief  ÉèÖÃ¸÷Í¨µÀ ADC ×ª»»Ê±¼ä
- *
- *   Èı¸öÍ¨µÀ¿ÉÒÔ¶ÀÁ¢ÉèÖÃ²»Í¬×ª»»Ê±¼ä¡£
- *   ×ª»»×ÜÊ±¼ä ¡Ö (VBUS_CT + VSHUNT_CT + TEMP_CT) ¡Á AVG ´ÎÊı
- *
- * @param  vct ×ÜÏßµçÑ¹×ª»»Ê±¼ä
- * @param  sct ·ÖÁ÷µçÑ¹×ª»»Ê±¼ä
- * @param  tct ÎÂ¶È×ª»»Ê±¼ä
- */
-void INA229_SetConversionTime(INA229_ConvTime_t vct, INA229_ConvTime_t sct, INA229_ConvTime_t tct)
-{
-    uint16_t cfg = INA229_ReadReg16(INA229_REG_ADC_CONFIG);
-
-    /* Çå³ıÈı¸ö×ª»»Ê±¼ä×Ö¶Î */
-    cfg &= ~(INA229_ADC_VBUSCT_Msk | INA229_ADC_VSHCT_Msk | INA229_ADC_VTCT_Msk);
-
-    /* Ğ´ÈëĞÂÖµ */
-    cfg |= ((uint16_t)vct << INA229_ADC_VBUSCT_Pos);
-    cfg |= ((uint16_t)sct << INA229_ADC_VSHCT_Pos);
-    cfg |= ((uint16_t)tct << INA229_ADC_VTCT_Pos);
-
-    INA229_WriteReg16(INA229_REG_ADC_CONFIG, cfg);
-}
-
-/**
- * @brief  ÉèÖÃÆ½¾ùÖµ²ÉÑù´ÎÊı
- * @param  avg ²ÉÑù´ÎÊıÃ¶¾ÙÖµ (1/4/16/.../1024)
- */
-void INA229_SetAveraging(INA229_AvgCount_t avg)
-{
-    uint16_t cfg = INA229_ReadReg16(INA229_REG_ADC_CONFIG);
-    /* Çå³ıÔ­ AVG ×Ö¶Î (µÍ 3-bit), Ğ´ÈëĞÂÖµ */
-    cfg = (cfg & ~INA229_ADC_AVG_Msk) | ((uint16_t)avg & 0x07);
-    INA229_WriteReg16(INA229_REG_ADC_CONFIG, cfg);
-}
-
-/**
- * @brief  ÉèÖÃ·ÖÁ÷Ğ£×¼Öµ
- * @param  v SHUNT_CAL Öµ (½öµÍ 15-bit ÓĞĞ§, ×î´ó 0x7FFF)
- */
-void INA229_SetShuntCal(uint16_t v)
-{
-    INA229_WriteReg16(INA229_REG_SHUNT_CAL, v & INA229_SHUNT_CAL_MAX);
-}
-
-/**
- * @brief  ÆôÓÃ/½ûÓÃ·ÖÁ÷ÎÂ¶È²¹³¥
- *
- *   µ± ppm != 0 Ê±:
- *     1. ÖÃÎ» CONFIG[TEMPCOMP]
- *     2. Ğ´Èë SHUNT_TEMPCO (ÎÂ¶ÈÏµÊı, ppm/¡ãC, µÍ 14-bit)
- *   µ± ppm == 0 Ê±:
- *     1. Çå³ı CONFIG[TEMPCOMP], ¹Ø±ÕÎÂ¶È²¹³¥
- *
- * @param  ppm ·ÖÁ÷µç×èÎÂ¶ÈÏµÊı (ppm/¡ãC), 0 ½ûÓÃ
- */
-void INA229_EnableTempComp(uint16_t ppm)
-{
-    uint16_t cfg = INA229_ReadReg16(INA229_REG_CONFIG);
-
-    if (ppm) {
-        /* ÆôÓÃÎÂ¶È²¹³¥: ÖÃÎ» TEMPCOMP, Ğ´ÈëÎÂ¶ÈÏµÊı */
-        cfg |= INA229_CONFIG_TEMPCOMP;
-        INA229_WriteReg16(INA229_REG_SHUNT_TEMPCO, ppm & 0x3FFF);  /* 14-bit */
-    } else {
-        /* ½ûÓÃÎÂ¶È²¹³¥: Çå³ı TEMPCOMP Î» */
-        cfg &= ~INA229_CONFIG_TEMPCOMP;
-    }
-    INA229_WriteReg16(INA229_REG_CONFIG, cfg);
-}
-
-/*===========================================================================
- * ±¨¾¯ãĞÖµÉèÖÃ
- *
- *   µ±²âÁ¿Öµ³¬¹ıãĞÖµÊ±, DIAG_ALRT ¼Ä´æÆ÷¶ÔÓ¦±êÖ¾Î»ÖÃÎ»,
- *   Í¬Ê± ALERT Òı½Å (ÈôÓĞÁ¬½Ó) ±»À­µÍ¡£
- *===========================================================================*/
-
-void INA229_SetShuntOverVoltage(uint16_t t)  { INA229_WriteReg16(INA229_REG_SOVL, t); }
-void INA229_SetShuntUnderVoltage(uint16_t t) { INA229_WriteReg16(INA229_REG_SUVL, t); }
-
-/**
- * @brief  ÉèÖÃ×ÜÏß¹ıÑ¹/Ç·Ñ¹ãĞÖµ
- * @note   BOVL/BUVL ¼Ä´æÆ÷Ö»ÓĞµÍ 15-bit ÓĞĞ§, ¸ßÎ»ÖÃÁã
- */
-void INA229_SetBusOverVoltage(uint16_t t)    { INA229_WriteReg16(INA229_REG_BOVL, t & 0x7FFF); }
-void INA229_SetBusUnderVoltage(uint16_t t)   { INA229_WriteReg16(INA229_REG_BUVL, t & 0x7FFF); }
-void INA229_SetTempLimit(uint16_t t)         { INA229_WriteReg16(INA229_REG_TEMP_LIMIT, t); }
-void INA229_SetPowerLimit(uint16_t t)        { INA229_WriteReg16(INA229_REG_PWR_LIMIT, t); }
-
-/*===========================================================================
- * Æ÷¼ş ID
- *===========================================================================*/
-
-/**
- * @brief  ¶ÁÈ¡ÖÆÔìÉÌ ID
- * @return TI = 0x5449 (ASCII: 'T'=0x54, 'I'=0x49)
- */
-uint16_t INA229_ReadManufacturerID(void) { return INA229_ReadReg16(INA229_REG_MANUFACTURER_ID); }
-
-/**
- * @brief  ¶ÁÈ¡Æ÷¼ş ID
- * @return INA229 = 0x2291
- */
-uint16_t INA229_ReadDeviceID(void)       { return INA229_ReadReg16(INA229_REG_DEVICE_ID); }
+/**
+ * @file    ina229.c
+ * @brief   INA229 åŠŸç‡ç›‘æ§å™¨ SPI é©±åŠ¨å®ç°
+ *
+ * @author  (ä½ çš„åå­—)
+ * @date    (æ—¥æœŸ)
+ *
+ * @note    ä»…ä¾èµ– "ina229.h"ã€"soft_spi.h" å’Œ <system.h>
+ *          æ‰€æœ‰è½¯ SPI åº•å±‚å‡½æ•°åœ¨ soft_spi.c ä¸­å®ç°
+ *
+ *   SPI é€šä¿¡æ ¼å¼è¯´æ˜:
+ *   æ¯æ¬¡ SPI ä¼ è¾“ä»¥ CS æ‹‰ä½å¼€å§‹, CS æ‹‰é«˜ç»“æŸã€‚
+ *   MOSI é¦–å­—èŠ‚ä¸ºå‘½ä»¤å­—èŠ‚: [ADDR5..ADDR0 | 0 | R/W]
+ *   MISO é¦–å­—èŠ‚ä¸ºçŠ¶æ€å­—èŠ‚ (å« ALRT/CRDY/MATHOF/MEMSTAT ç­‰æ ‡å¿—)ã€‚
+ *
+ *   å¯„å­˜å™¨æ•°æ®å®½åº¦:
+ *     16-bit: å…±éœ€ 3 å­—èŠ‚ (1 å‘½ä»¤ + 2 æ•°æ®)
+ *     24-bit: å…±éœ€ 4 å­—èŠ‚ (1 å‘½ä»¤ + 3 æ•°æ®), æœ‰æ•ˆæ•°æ®åœ¨ä½ 20-bit
+ *     40-bit: å…±éœ€ 6 å­—èŠ‚ (1 å‘½ä»¤ + 5 æ•°æ®), æœ‰æ•ˆæ•°æ®åœ¨ä½ 40-bit
+ */
+
+#include "ina229.h"
+#include "soft_spi.h"
+#include <system.h>
+#include <string.h>   /* memset() */
+
+/*===========================================================================
+ * å†…éƒ¨å¸¸é‡
+ *===========================================================================*/
+
+/** @brief SPI å‘½ä»¤å­—èŠ‚ä¸­çš„è¯»/å†™æ ‡å¿—ä½ */
+#define INA229_CMD_READ      0x01  /**< è¯»æ“ä½œ: å‘½ä»¤å­—èŠ‚æœ€ä½ä½ = 1 */
+#define INA229_CMD_WRITE     0x00  /**< å†™æ“ä½œ: å‘½ä»¤å­—èŠ‚æœ€ä½ä½ = 0 */
+
+/**
+ * @brief SHUNT_CAL è®¡ç®—å…¬å¼ä¸­çš„å¸¸æ•°å› å­
+ *
+ *   æ•°æ®æ‰‹å†Œå…¬å¼: SHUNT_CAL = 13107200000 Ã— Rshunt Ã— Imax
+ *   å…¶ä¸­:
+ *     - 13107200000 = 0x30D400000 â‰ˆ 1.31072 Ã— 10^10
+ *     - Rshunt å•ä½: Î©
+ *     - Imax   å•ä½: A
+ *
+ *   è‹¥è®¡ç®—ç»“æœ > 32767 (0x7FFF), åˆ™é™¤ä»¥ 4 é‡æ–°ç¼©æ”¾,
+ *   ä¸Šé™ 32767 (15-bit æ— ç¬¦å·æœ€å¤§å€¼)ã€‚
+ */
+#define INA229_SHUNT_CAL_FACTOR       13107200000.0f
+#define INA229_SHUNT_CAL_DIVISOR      4.0f
+#define INA229_SHUNT_CAL_MAX_FLOAT    32767.0f
+
+/**
+ * @brief 24-bit å¯„å­˜å™¨ä¸­æœ‰æ•ˆæ•°æ®ä½æ•°
+ *
+ *   å¯¹äº VSHUNT/CURRENT: 20-bit ADC æ•°æ®, å·¦å¯¹é½åœ¨ 24-bit å¸§ä¸­,
+ *   éœ€å³ç§» 4-bit å¾—åˆ°å®é™…å€¼ã€‚
+ *   å¯¹äº VBUS/POWER: 20-bit æ•°æ®, æ— ç¬¦å·ã€‚
+ */
+#define INA229_24BIT_DATA_SHIFT       4
+
+/**
+ * @brief 40-bit å¯„å­˜å™¨ç¬¦å·ä½æ©ç  (CHARGE å¯„å­˜å™¨)
+ *
+ *   CHARGE ä¸º 40-bit äºŒè¿›åˆ¶è¡¥ç , ç¬¦å·ä½åœ¨ bit39ã€‚
+ *   æ‰©å±•åˆ° int64_t æ—¶, è‹¥ bit39=1, åˆ™é«˜ 24-bit å…¨éƒ¨å¡«å…… 1ã€‚
+ */
+#define INA229_CHARGE_SIGN_BIT        0x8000000000ULL
+#define INA229_CHARGE_SIGN_EXTEND     0xFFFFFF0000000000ULL
+
+/*===========================================================================
+ * å†…éƒ¨è¾…åŠ©å‡½æ•°
+ *===========================================================================*/
+
+/**
+ * @brief  æ„å»º SPI å‘½ä»¤å­—èŠ‚
+ * @param  addr å¯„å­˜å™¨åœ°å€ (6-bit, 0x00~0x3F)
+ * @param  rw   è¯»/å†™æ ‡å¿—: INA229_CMD_READ æˆ– INA229_CMD_WRITE
+ * @return 8-bit å‘½ä»¤å­—èŠ‚
+ *
+ *   å‘½ä»¤å­—èŠ‚ä½å¸ƒå±€ (MSBâ†’LSB):
+ *     BIT[7:2] = ADDR[5:0]  (6-bit å¯„å­˜å™¨åœ°å€)
+ *     BIT[1]   = 0          (ä¿ç•™, å§‹ç»ˆä¸º 0)
+ *     BIT[0]   = R/W        (0=å†™, 1=è¯»)
+ *
+ *   ç­‰æ•ˆå…¬å¼: cmd = (addr << 2) | rw
+ */
+static inline uint8_t _BuildCmd(uint8_t addr, uint8_t rw)
+{
+    return (uint8_t)(((addr & 0x3F) << 2) | (rw & 0x01));
+}
+
+/**
+ * @brief  24-bit ç¬¦å·æ‰©å±•ä¸º 32-bit (ç”¨äº VSHUNT/CURRENT ç­‰æœ‰ç¬¦å·å¯„å­˜å™¨)
+ * @param  raw24 24-bit åŸå§‹å€¼ (bit23 ä¸ºç¬¦å·ä½, äºŒè¿›åˆ¶è¡¥ç )
+ * @return ç¬¦å·æ‰©å±•åçš„ 32-bit æœ‰ç¬¦å·å€¼
+ *
+ *   ä¾‹: raw24=0x800000 â†’ ç¬¦å·ä½=1 â†’ è¿”å› 0xFF800000 (int32_t = -8388608)
+ *       raw24=0x7FFFFF â†’ ç¬¦å·ä½=0 â†’ è¿”å› 0x007FFFFF (int32_t = +8388607)
+ */
+static inline int32_t _SignExtend24(uint32_t raw24)
+{
+    if (raw24 & 0x800000UL) {
+        /* ç¬¦å·ä½ä¸º 1, å°†é«˜ 8-bit å¡«å……ä¸º 1 */
+        return (int32_t)(raw24 | 0xFF000000UL);
+    }
+    return (int32_t)raw24;
+}
+
+/*===========================================================================
+ * åˆå§‹åŒ–ä¸ç³»ç»Ÿæ§åˆ¶
+ *===========================================================================*/
+
+/**
+ * @brief  åˆå§‹åŒ– INA229 é©±åŠ¨
+ *
+ *  åˆå§‹åŒ–æµç¨‹:
+ *    1. åˆå§‹åŒ–è½¯ä»¶ SPI å¼•è„š (Soft_SPI_Init)
+ *    2. å‘é€è½¯ä»¶å¤ä½å‘½ä»¤
+ *    3. è¯»å–å™¨ä»¶ ID éªŒè¯é€šä¿¡æ­£å¸¸ (æœŸæœ› 0x2291)
+ *    4. é…ç½®é»˜è®¤ ADC å‚æ•°: è¿ç»­æ¨¡å¼, å…¨éƒ¨é€šé“, 1052Î¼sè½¬æ¢æ—¶é—´, 16æ¬¡å¹³å‡
+ *    5. æ ¹æ®åˆ†æµç”µé˜»å’Œæœ€å¤§é¢„æœŸç”µæµè®¡ç®—å¹¶å†™å…¥ SHUNT_CAL
+ *
+ * @param  rshunt_ohm åˆ†æµç”µé˜»å€¼ (Î©)
+ * @param  i_max_a    æœ€å¤§é¢„æœŸç”µæµ (A)
+ * @retval true  åˆå§‹åŒ–æˆåŠŸ
+ * @retval false å™¨ä»¶ ID ä¸åŒ¹é…, SPI é€šä¿¡å¤±è´¥æˆ–å™¨ä»¶æœªè¿æ¥
+ */
+bool INA229_Init(float rshunt_ohm, float i_max_a)
+{
+    uint16_t dev_id;
+    float    scal;
+
+    /* 1. åˆå§‹åŒ–è½¯ä»¶ SPI å¼•è„š */
+    Soft_SPI_Init();
+
+    /* 2. è½¯ä»¶å¤ä½å™¨ä»¶ */
+    INA229_Reset();
+
+    /* 3. è¯»å–å™¨ä»¶ ID éªŒè¯é€šä¿¡ (INA229 çš„ DEVICE_ID = 0x2291) */
+    dev_id = INA229_ReadDeviceID();
+    if (dev_id != 0x2291) {
+        return false;
+    }
+
+    /* 4. å†™å…¥é»˜è®¤ ADC é…ç½®:
+     *    - è¿ç»­æ¨¡å¼, å…¨éƒ¨é€šé“ (VBUS + VSHUNT + TEMP)
+     *    - è½¬æ¢æ—¶é—´: 1052Î¼s (å™ªå£°ä¸é€Ÿåº¦çš„æŠ˜ä¸­é€‰æ‹©)
+     *    - 16 æ¬¡å¹³å‡å€¼ (è¿›ä¸€æ­¥é™ä½å™ªå£°)
+     */
+    INA229_WriteReg16(INA229_REG_ADC_CONFIG,
+        INA229_ADC_MODE_CONT_ALL |
+        (INA229_CT_1052US << INA229_ADC_VBUSCT_Pos) |
+        (INA229_CT_1052US << INA229_ADC_VSHCT_Pos) |
+        (INA229_CT_1052US << INA229_ADC_VTCT_Pos) |
+        INA229_AVG_16);
+
+    /* 5. è®¡ç®—å¹¶å†™å…¥ SHUNT_CAL å€¼
+     *
+     *    SHUNT_CAL = 13107200000 Ã— Rshunt Ã— Imax
+     *
+     *    è‹¥ç»“æœ > 32767 (15-bit æœ€å¤§å€¼), åˆ™é™¤ä»¥ 4 å¹¶é’³ä½åˆ° 32767ã€‚
+     *    +0.5 ç”¨äºå››èˆäº”å…¥åˆ°æœ€è¿‘æ•´æ•°ã€‚
+     *
+     *    ç¤ºä¾‹: Rshunt=0.001Î©, Imax=10A
+     *      scal = 13107200000 Ã— 0.001 Ã— 10 = 131072000
+     *      scal > 32767 â†’ scal = 32768000 â†’ ä» > 32767 â†’ é’³ä½ 32767
+     */
+    scal = INA229_SHUNT_CAL_FACTOR * rshunt_ohm * i_max_a;
+    if (scal > INA229_SHUNT_CAL_MAX_FLOAT) scal /= INA229_SHUNT_CAL_DIVISOR;
+    if (scal > INA229_SHUNT_CAL_MAX_FLOAT) scal = INA229_SHUNT_CAL_MAX_FLOAT;
+    INA229_SetShuntCal((uint16_t)(scal + 0.5f));
+
+    return true;
+}
+
+/**
+ * @brief  è½¯ä»¶å¤ä½ INA229
+ * @note   å†™ CONFIG[RST]=1, ç„¶åç­‰å¾… 1ms è®©å™¨ä»¶å®Œæˆå¤ä½åºåˆ—ã€‚
+ *         å¤ä½åæ‰€æœ‰å¯„å­˜å™¨æ¢å¤é»˜è®¤å€¼ã€‚
+ */
+void INA229_Reset(void)
+{
+    INA229_WriteReg16(INA229_REG_CONFIG, INA229_CONFIG_RST);
+    Soft_SPI_DelayUs(1000);  /* ç­‰å¾… 1ms ä»¥ç¡®ä¿å¤ä½å®Œæˆ */
+}
+
+/**
+ * @brief  æ¸…é™¤ç”µèƒ½/ç”µè·ç´¯åŠ å™¨
+ * @note   å†™ CONFIG[RSTACC]=1, RSTACC ä½ä¼šè‡ªåŠ¨æ¸…é™¤, æ— éœ€æ‰‹åŠ¨å›å†™ã€‚
+ */
+void INA229_ClearAccumulators(void)
+{
+    INA229_WriteReg16(INA229_REG_CONFIG, INA229_CONFIG_RSTACC);
+}
+
+/*===========================================================================
+ * åº•å±‚å¯„å­˜å™¨è¯»å†™
+ *===========================================================================*/
+
+/**
+ * @brief  è¯»å– 16-bit å¯„å­˜å™¨
+ *
+ *   SPI å¸§: | CMD(1B) | D[15:8](1B) | D[7:0](1B) |
+ *   å‘é€ 3 å­—èŠ‚ (å‘½ä»¤ + 2 å¡«å……), æ¥æ”¶ 3 å­—èŠ‚ (çŠ¶æ€ + 2 æ•°æ®)ã€‚
+ *   æ³¨æ„: é¦–ä¸ªæ¥æ”¶å­—èŠ‚ä¸ºçŠ¶æ€å­—èŠ‚, æ­¤å¤„ä¸¢å¼ƒ; æ•°æ®åœ¨ rx[1] å’Œ rx[2]ã€‚
+ *
+ * @param  addr å¯„å­˜å™¨åœ°å€ (0x00~0x3F)
+ * @return 16-bit å¯„å­˜å™¨å€¼
+ */
+uint16_t INA229_ReadReg16(uint8_t addr)
+{
+    uint8_t tx[3], rx[3];
+
+    tx[0] = _BuildCmd(addr, INA229_CMD_READ);
+    tx[1] = tx[2] = 0x00;  /* å¡«å……å­—èŠ‚, MOSI é€å‡º 0 */
+
+    Soft_SPI_CS_Low();
+    Soft_SPI_TransferBuf(tx, rx, 3);
+    Soft_SPI_CS_High();
+
+    /* rx[0] = çŠ¶æ€å­—èŠ‚ (å¿½ç•¥)
+     * rx[1] = D[15:8], rx[2] = D[7:0] */
+    return ((uint16_t)rx[1] << 8) | rx[2];
+}
+
+/**
+ * @brief  è¯»å– 24-bit å¯„å­˜å™¨ (VSHUNT, VBUS, CURRENT, POWER)
+ *
+ *   SPI å¸§: | CMD(1B) | D[23:16](1B) | D[15:8](1B) | D[7:0](1B) |
+ *   å‘é€ 4 å­—èŠ‚, æ¥æ”¶ 4 å­—èŠ‚ã€‚
+ *   å®é™…æœ‰æ•ˆæ•°æ®ä¸º 20-bit, å·¦å¯¹é½åœ¨ 24-bit å¸§çš„ bit[23:4],
+ *   ä½ 4-bit å§‹ç»ˆä¸º 0ã€‚
+ *
+ * @param  addr å¯„å­˜å™¨åœ°å€
+ * @return 32-bit åŸå§‹å€¼ (é«˜ 8-bit ä¸º 0, æœ‰æ•ˆæ•°æ®åœ¨ä½ 24-bit)
+ */
+uint32_t INA229_ReadReg24(uint8_t addr)
+{
+    uint8_t tx[4], rx[4];
+
+    tx[0] = _BuildCmd(addr, INA229_CMD_READ);
+    tx[1] = tx[2] = tx[3] = 0x00;
+
+    Soft_SPI_CS_Low();
+    Soft_SPI_TransferBuf(tx, rx, 4);
+    Soft_SPI_CS_High();
+
+    /* rx[0] = çŠ¶æ€å­—èŠ‚, rx[1..3] = 24-bit æ•°æ® */
+    return ((uint32_t)rx[1] << 16) | ((uint32_t)rx[2] << 8) | rx[3];
+}
+
+/**
+ * @brief  è¯»å– 40-bit å¯„å­˜å™¨ (ENERGY, CHARGE)
+ *
+ *   SPI å¸§: | CMD(1B) | D[39:32](1B) | ... | D[7:0](1B) |
+ *   å‘é€ 6 å­—èŠ‚, æ¥æ”¶ 6 å­—èŠ‚ã€‚
+ *   å®é™…æœ‰æ•ˆæ•°æ®ä¸º 40-bit, å­˜æ”¾åœ¨ uint64_t ä½ 40-bitã€‚
+ *
+ * @param  addr å¯„å­˜å™¨åœ°å€
+ * @return 64-bit åŸå§‹å€¼ (é«˜ 24-bit ä¸º 0, æœ‰æ•ˆæ•°æ®åœ¨ä½ 40-bit)
+ */
+uint64_t INA229_ReadReg40(uint8_t addr)
+{
+    uint8_t tx[6], rx[6];
+
+    tx[0] = _BuildCmd(addr, INA229_CMD_READ);
+    tx[1] = tx[2] = tx[3] = tx[4] = tx[5] = 0x00;
+
+    Soft_SPI_CS_Low();
+    Soft_SPI_TransferBuf(tx, rx, 6);
+    Soft_SPI_CS_High();
+
+    /* rx[0] = çŠ¶æ€å­—èŠ‚, rx[1..5] = 40-bit æ•°æ® */
+    return ((uint64_t)rx[1] << 32)
+         | ((uint64_t)rx[2] << 24)
+         | ((uint64_t)rx[3] << 16)
+         | ((uint64_t)rx[4] << 8)
+         |  (uint64_t)rx[5];
+}
+
+/**
+ * @brief  å†™å…¥ 16-bit å¯„å­˜å™¨
+ *
+ *   SPI å¸§: | CMD(1B) | D[15:8](1B) | D[7:0](1B) |
+ *   å‘é€ 3 å­—èŠ‚, æ¥æ”¶å†…å®¹å¿½ç•¥ (MISO è¿”å›æ—§å¯„å­˜å™¨å€¼, æ­¤å¤„ä¸¢å¼ƒ)ã€‚
+ *
+ * @param  addr å¯„å­˜å™¨åœ°å€ (0x00~0x3F)
+ * @param  data 16-bit æ•°æ®
+ */
+void INA229_WriteReg16(uint8_t addr, uint16_t data)
+{
+    uint8_t tx[3];
+
+    tx[0] = _BuildCmd(addr, INA229_CMD_WRITE);
+    tx[1] = (uint8_t)(data >> 8);     /* é«˜å­—èŠ‚ D[15:8] */
+    tx[2] = (uint8_t)(data & 0xFF);   /* ä½å­—èŠ‚ D[7:0]  */
+
+    Soft_SPI_CS_Low();
+    Soft_SPI_TransferBuf(tx, NULL, 3);  /* rx=NULL, ä¸¢å¼ƒ MISO è¿”å› */
+    Soft_SPI_CS_High();
+}
+
+/*===========================================================================
+ * æµ‹é‡å€¼è¯»å– (å·¥ç¨‹å•ä½è½¬æ¢)
+ *===========================================================================*/
+
+/**
+ * @brief  è¯»å–åˆ†æµç”µå‹ (VSHUNT), è½¬æ¢ä¸ºä¼ç‰¹
+ *
+ *   è½¬æ¢æµç¨‹:
+ *     1. è¯»å– 24-bit åŸå§‹å€¼
+ *     2. ç¬¦å·æ‰©å±•åˆ° 32-bit (VSHUNT ä¸ºäºŒè¿›åˆ¶è¡¥ç )
+ *     3. å³ç§» 4-bit (ä½ 4-bit å§‹ç»ˆä¸º 0)
+ *     4. ä¹˜ä»¥å¯¹åº” ADCRANGE çš„ LSB å€¼
+ *
+ * @param  adc_range ADCRANGE ä½å€¼ (0=Â±163.84mV/312.5nV, 1=Â±40.96mV/78.125nV)
+ * @return åˆ†æµç”µå‹ (V)
+ */
+float INA229_ReadVShunt(uint8_t adc_range)
+{
+    /* 1. è¯»åŸå§‹å€¼, ç¬¦å·æ‰©å±•, 2. å³ç§» 4-bit å¾—åˆ° 20-bit ADC æ•°æ® */
+    int32_t val = _SignExtend24(INA229_ReadReg24(INA229_REG_VSHUNT)) >> INA229_24BIT_DATA_SHIFT;
+
+    /* 3. ä¹˜ä»¥ LSB, é‡ç¨‹ä¸åŒ LSB ä¸åŒ */
+    if (adc_range) {
+        return (float)val * INA229_VSHUNT_LSB_ADCRANGE1;  /* 78.125 nV/LSB */
+    } else {
+        return (float)val * INA229_VSHUNT_LSB_ADCRANGE0;  /* 312.5 nV/LSB  */
+    }
+}
+
+/**
+ * @brief  è¯»å–æ€»çº¿ç”µå‹ (VBUS), è½¬æ¢ä¸ºä¼ç‰¹
+ *
+ *   VBUS ä¸ºæ— ç¬¦å· 20-bit æ•°æ®, é‡ç¨‹ 0~85Vã€‚
+ *
+ * @return æ€»çº¿ç”µå‹ (V)
+ */
+float INA229_ReadVBus(void)
+{
+    /* è¯» 24-bit, å³ç§» 4-bit, å–ä½ 20-bit ä¸æ©ç  */
+    uint32_t val = (INA229_ReadReg24(INA229_REG_VBUS) >> INA229_24BIT_DATA_SHIFT) & 0xFFFFFUL;
+    return (float)val * INA229_VBUS_LSB;  /* 195.3125 Î¼V/LSB */
+}
+
+/**
+ * @brief  è¯»å–èŠ¯ç‰‡æ¸©åº¦ (DIETEMP), è½¬æ¢ä¸ºæ‘„æ°åº¦
+ *
+ *   DIETEMP ä¸º 16-bit äºŒè¿›åˆ¶è¡¥ç , LSB = 7.8125 mÂ°Cã€‚
+ *   é‡ç¨‹: -256Â°C ~ +256Â°C (å®é™…èŠ¯ç‰‡å·¥ä½œèŒƒå›´çº¦ -40Â°C ~ +125Â°C)ã€‚
+ *
+ * @return èŠ¯ç‰‡æ¸©åº¦ (Â°C)
+ */
+float INA229_ReadTemperature(void)
+{
+    /* è½¬æ¢ä¸ºæœ‰ç¬¦å· 16-bit, å†ä¹˜ä»¥ LSB */
+    return (float)((int16_t)INA229_ReadReg16(INA229_REG_DIETEMP)) * INA229_TEMP_LSB;
+}
+
+/**
+ * @brief  è¯»å–ç”µæµ (CURRENT) åŸå§‹å€¼
+ *
+ *   ç”µæµé€šè¿‡ VSHUNT / Rshunt è®¡ç®—, INA229 å†…éƒ¨è‡ªåŠ¨å®Œæˆ:
+ *     CURRENT = VSHUNT Ã— SHUNT_CAL / 4
+ *
+ *   CURRENT ä¸º 20-bit äºŒè¿›åˆ¶è¡¥ç ã€‚
+ *
+ * @param  shunt_cal_value SHUNT_CAL å¯„å­˜å™¨å€¼
+ *         (TODO: å½“å‰æœªå®ç°å·¥ç¨‹å•ä½æ¢ç®—, ä¿ç•™å‚æ•°ç”¨äºæœªæ¥æ‰©å±•)
+ * @return ç”µæµåŸå§‹å€¼ (éœ€é™¤ä»¥ SHUNT_CAL å¾—åˆ°å®‰åŸ¹)
+ */
+float INA229_ReadCurrent(uint16_t shunt_cal_value)
+{
+    int32_t val = _SignExtend24(INA229_ReadReg24(INA229_REG_CURRENT)) >> INA229_24BIT_DATA_SHIFT;
+
+    /* TODO: ä½¿ç”¨ shunt_cal_value å°†åŸå§‹å€¼è½¬æ¢ä¸ºå®‰åŸ¹:
+     *   I(A) = val / shunt_cal_value
+     *   å½“å‰ç›´æ¥è¿”å›åŸå§‹å€¼, ç”±è°ƒç”¨è€…è‡ªè¡Œæ¢ç®—ã€‚
+     */
+    (void)shunt_cal_value;  /* æ˜¾å¼æ ‡è®°å‚æ•°æœªä½¿ç”¨, æ¶ˆé™¤ç¼–è¯‘å™¨è­¦å‘Š */
+    return (float)val;
+}
+
+/**
+ * @brief  è¯»å–åŠŸç‡ (POWER) åŸå§‹å€¼
+ *
+ *   åŠŸç‡é€šè¿‡ VSHUNT Ã— VBUS / Rshunt è®¡ç®—, INA229 å†…éƒ¨è‡ªåŠ¨å®Œæˆ:
+ *     POWER = CURRENT Ã— VBUS / 32
+ *
+ *   POWER ä¸º 24-bit æ— ç¬¦å·å€¼ (ä½† bit23 åœ¨æŸäº›æ¡ä»¶ä¸‹å¯ä¸ºç¬¦å·ä½)ã€‚
+ *
+ * @param  shunt_cal_value SHUNT_CAL å¯„å­˜å™¨å€¼
+ *         (TODO: å½“å‰æœªå®ç°å·¥ç¨‹å•ä½æ¢ç®—, ä¿ç•™å‚æ•°ç”¨äºæœªæ¥æ‰©å±•)
+ * @return åŠŸç‡åŸå§‹å€¼ (éœ€é™¤ä»¥ 32Ã—SHUNT_CAL å¾—åˆ°ç“¦ç‰¹)
+ */
+float INA229_ReadPower(uint16_t shunt_cal_value)
+{
+    int32_t val = (int32_t)(INA229_ReadReg24(INA229_REG_POWER) & 0xFFFFFFUL);
+
+    /* TODO: ä½¿ç”¨ shunt_cal_value å°†åŸå§‹å€¼è½¬æ¢ä¸ºç“¦ç‰¹:
+     *   P(W) = val / (32 Ã— shunt_cal_value)
+     *   å½“å‰ç›´æ¥è¿”å›åŸå§‹å€¼, ç”±è°ƒç”¨è€…è‡ªè¡Œæ¢ç®—ã€‚
+     */
+    (void)shunt_cal_value;
+    return (float)val;
+}
+
+/**
+ * @brief  ä¸€æ¬¡æ€§è¯»å–æ‰€æœ‰ä¸»è¦æµ‹é‡æ•°æ®
+ *
+ *   ä¾æ¬¡è¯»å– VSHUNT, VBUS, TEMP, CURRENT, POWER, ENERGY, CHARGE,
+ *   å¡«å……åˆ° INA229_Data_t ç»“æ„ä½“ã€‚
+ *
+ *   @warning è¯»å–æœŸé—´æ•°æ®é‡‡æ ·æ—¶åˆ»ä¸åŒ, å„é€šé“ä¹‹é—´å¯èƒ½æœ‰å¾®å°æ—¶é—´å·®ã€‚
+ *
+ * @param  data      è¾“å‡ºç»“æ„ä½“æŒ‡é’ˆ (NULL æ—¶ç›´æ¥è¿”å›)
+ * @param  adc_range ADCRANGE ä½å€¼
+ * @param  shunt_cal SHUNT_CAL å¯„å­˜å™¨å€¼
+ */
+void INA229_ReadAll(INA229_Data_t *data, uint8_t adc_range, uint16_t shunt_cal)
+{
+    if (!data) return;
+
+    /* æ¸…é›¶ç»“æ„ä½“, é¿å…æ®‹ç•™æ•°æ®å¹²æ‰° */
+    memset(data, 0, sizeof(*data));
+
+    data->vshunt      = INA229_ReadVShunt(adc_range);
+    data->vbus        = INA229_ReadVBus();
+    data->temperature = INA229_ReadTemperature();
+    data->current     = INA229_ReadCurrent(shunt_cal);
+    data->power       = INA229_ReadPower(shunt_cal);
+    data->energy      = INA229_ReadEnergy();
+    data->charge      = INA229_ReadCharge();
+}
+
+/**
+ * @brief  è¯»å–ç”µèƒ½ç´¯ç§¯å€¼ (ENERGY)
+ * @return 40-bit ç”µèƒ½åŸå§‹å€¼ (LSB, æ— ç¬¦å·)
+ * @note   LSB = 3.2 Ã— SHUNT_CAL (Î¼J), éœ€å¤–éƒ¨æ¢ç®—ä¸ºç„¦è€³
+ */
+uint64_t INA229_ReadEnergy(void)
+{
+    return INA229_ReadReg40(INA229_REG_ENERGY);
+}
+
+/**
+ * @brief  è¯»å–ç”µè·ç´¯ç§¯å€¼ (CHARGE), å« 40-bit ç¬¦å·æ‰©å±•
+ *
+ *   CHARGE ä¸º 40-bit äºŒè¿›åˆ¶è¡¥ç , ç¬¦å·ä½åœ¨ bit39ã€‚
+ *   å…ˆè¯»å– 40-bit åŸå§‹å€¼, å†æ‰©å±•åˆ° int64_tã€‚
+ *
+ * @return 40-bit ç”µè·åŸå§‹å€¼ (LSB, äºŒè¿›åˆ¶è¡¥ç )
+ * @note   LSB = SHUNT_CAL (Î¼C), éœ€å¤–éƒ¨æ¢ç®—ä¸ºåº“ä»‘
+ */
+int64_t INA229_ReadCharge(void)
+{
+    uint64_t raw = INA229_ReadReg40(INA229_REG_CHARGE);
+
+    /* ç¬¦å·æ‰©å±•: è‹¥ bit39=1, åˆ™é«˜ 24-bit å…¨éƒ¨å¡«å…… 1 */
+    if (raw & INA229_CHARGE_SIGN_BIT) {
+        return (int64_t)(raw | INA229_CHARGE_SIGN_EXTEND);
+    }
+    return (int64_t)raw;
+}
+
+/**
+ * @brief  æ£€æŸ¥ ADC è½¬æ¢æ˜¯å¦å®Œæˆ
+ *
+ *   é€šè¿‡è¯»å– DIAG_ALRT[CNVR] ä½ (bit14) åˆ¤æ–­ã€‚
+ *   è¿ç»­æ¨¡å¼ä¸‹, è¯¥ä½åœ¨æ¯ä¸ªè½¬æ¢å‘¨æœŸç»“æŸæ—¶ç¿»è½¬ã€‚
+ *
+ * @retval true  è½¬æ¢å®Œæˆ, å„é€šé“æ•°æ®å·²æ›´æ–°
+ * @retval false è½¬æ¢è¿›è¡Œä¸­
+ */
+bool INA229_IsConversionReady(void)
+{
+    /* DIAG_ALRT bit14 = CNVR (è½¬æ¢å°±ç»ª) */
+    return (INA229_ReadReg16(INA229_REG_DIAG_ALRT) & INA229_DIAG_ALRT_CNVR) ? true : false;
+}
+
+/**
+ * @brief  è¯»å–è¯Šæ–­/æŠ¥è­¦å¯„å­˜å™¨å®Œæ•´å€¼
+ * @return DIAG_ALRT å¯„å­˜å™¨ 16-bit åŸå§‹å€¼
+ */
+uint16_t INA229_ReadDiagAlrt(void)
+{
+    return INA229_ReadReg16(INA229_REG_DIAG_ALRT);
+}
+
+/*===========================================================================
+ * é…ç½® API (è¯»-ä¿®æ”¹-å†™æ¨¡å¼)
+ *===========================================================================*/
+
+/**
+ * @brief  è®¾ç½® ADC é‡ç¨‹
+ * @param  range 0=Â±163.84mV (é»˜è®¤), éé›¶=Â±40.96mV
+ */
+void INA229_SetADCRange(uint8_t range)
+{
+    uint16_t cfg = INA229_ReadReg16(INA229_REG_CONFIG);
+    cfg &= ~INA229_CONFIG_ADCRANGE;       /* æ¸…é™¤åŸ ADCRANGE ä½ */
+    if (range) cfg |= INA229_CONFIG_ADCRANGE;  /* è®¾ç½®æ–°å€¼ */
+    INA229_WriteReg16(INA229_REG_CONFIG, cfg);
+}
+
+/**
+ * @brief  è®¾ç½® ADC å·¥ä½œæ¨¡å¼
+ * @param  mode æ¨¡å¼å€¼ (å¦‚ INA229_ADC_MODE_CONT_ALL)
+ */
+void INA229_SetMode(uint16_t mode)
+{
+    uint16_t cfg = INA229_ReadReg16(INA229_REG_ADC_CONFIG);
+    /* æ¸…é™¤åŸ MODE å­—æ®µ, å†™å…¥æ–°å€¼ (åªä¿ç•™ä½ 4-bit æ¨¡å¼ç¼–ç ) */
+    cfg = (cfg & ~INA229_ADC_MODE_Msk) | (mode & INA229_ADC_MODE_Msk);
+    INA229_WriteReg16(INA229_REG_ADC_CONFIG, cfg);
+}
+
+/**
+ * @brief  è®¾ç½®å„é€šé“ ADC è½¬æ¢æ—¶é—´
+ *
+ *   ä¸‰ä¸ªé€šé“å¯ä»¥ç‹¬ç«‹è®¾ç½®ä¸åŒè½¬æ¢æ—¶é—´ã€‚
+ *   è½¬æ¢æ€»æ—¶é—´ â‰ˆ (VBUS_CT + VSHUNT_CT + TEMP_CT) Ã— AVG æ¬¡æ•°
+ *
+ * @param  vct æ€»çº¿ç”µå‹è½¬æ¢æ—¶é—´
+ * @param  sct åˆ†æµç”µå‹è½¬æ¢æ—¶é—´
+ * @param  tct æ¸©åº¦è½¬æ¢æ—¶é—´
+ */
+void INA229_SetConversionTime(INA229_ConvTime_t vct, INA229_ConvTime_t sct, INA229_ConvTime_t tct)
+{
+    uint16_t cfg = INA229_ReadReg16(INA229_REG_ADC_CONFIG);
+
+    /* æ¸…é™¤ä¸‰ä¸ªè½¬æ¢æ—¶é—´å­—æ®µ */
+    cfg &= ~(INA229_ADC_VBUSCT_Msk | INA229_ADC_VSHCT_Msk | INA229_ADC_VTCT_Msk);
+
+    /* å†™å…¥æ–°å€¼ */
+    cfg |= ((uint16_t)vct << INA229_ADC_VBUSCT_Pos);
+    cfg |= ((uint16_t)sct << INA229_ADC_VSHCT_Pos);
+    cfg |= ((uint16_t)tct << INA229_ADC_VTCT_Pos);
+
+    INA229_WriteReg16(INA229_REG_ADC_CONFIG, cfg);
+}
+
+/**
+ * @brief  è®¾ç½®å¹³å‡å€¼é‡‡æ ·æ¬¡æ•°
+ * @param  avg é‡‡æ ·æ¬¡æ•°æšä¸¾å€¼ (1/4/16/.../1024)
+ */
+void INA229_SetAveraging(INA229_AvgCount_t avg)
+{
+    uint16_t cfg = INA229_ReadReg16(INA229_REG_ADC_CONFIG);
+    /* æ¸…é™¤åŸ AVG å­—æ®µ (ä½ 3-bit), å†™å…¥æ–°å€¼ */
+    cfg = (cfg & ~INA229_ADC_AVG_Msk) | ((uint16_t)avg & 0x07);
+    INA229_WriteReg16(INA229_REG_ADC_CONFIG, cfg);
+}
+
+/**
+ * @brief  è®¾ç½®åˆ†æµæ ¡å‡†å€¼
+ * @param  v SHUNT_CAL å€¼ (ä»…ä½ 15-bit æœ‰æ•ˆ, æœ€å¤§ 0x7FFF)
+ */
+void INA229_SetShuntCal(uint16_t v)
+{
+    INA229_WriteReg16(INA229_REG_SHUNT_CAL, v & INA229_SHUNT_CAL_MAX);
+}
+
+/**
+ * @brief  å¯ç”¨/ç¦ç”¨åˆ†æµæ¸©åº¦è¡¥å¿
+ *
+ *   å½“ ppm != 0 æ—¶:
+ *     1. ç½®ä½ CONFIG[TEMPCOMP]
+ *     2. å†™å…¥ SHUNT_TEMPCO (æ¸©åº¦ç³»æ•°, ppm/Â°C, ä½ 14-bit)
+ *   å½“ ppm == 0 æ—¶:
+ *     1. æ¸…é™¤ CONFIG[TEMPCOMP], å…³é—­æ¸©åº¦è¡¥å¿
+ *
+ * @param  ppm åˆ†æµç”µé˜»æ¸©åº¦ç³»æ•° (ppm/Â°C), 0 ç¦ç”¨
+ */
+void INA229_EnableTempComp(uint16_t ppm)
+{
+    uint16_t cfg = INA229_ReadReg16(INA229_REG_CONFIG);
+
+    if (ppm) {
+        /* å¯ç”¨æ¸©åº¦è¡¥å¿: ç½®ä½ TEMPCOMP, å†™å…¥æ¸©åº¦ç³»æ•° */
+        cfg |= INA229_CONFIG_TEMPCOMP;
+        INA229_WriteReg16(INA229_REG_SHUNT_TEMPCO, ppm & 0x3FFF);  /* 14-bit */
+    } else {
+        /* ç¦ç”¨æ¸©åº¦è¡¥å¿: æ¸…é™¤ TEMPCOMP ä½ */
+        cfg &= ~INA229_CONFIG_TEMPCOMP;
+    }
+    INA229_WriteReg16(INA229_REG_CONFIG, cfg);
+}
+
+/*===========================================================================
+ * æŠ¥è­¦é˜ˆå€¼è®¾ç½®
+ *
+ *   å½“æµ‹é‡å€¼è¶…è¿‡é˜ˆå€¼æ—¶, DIAG_ALRT å¯„å­˜å™¨å¯¹åº”æ ‡å¿—ä½ç½®ä½,
+ *   åŒæ—¶ ALERT å¼•è„š (è‹¥æœ‰è¿æ¥) è¢«æ‹‰ä½ã€‚
+ *===========================================================================*/
+
+void INA229_SetShuntOverVoltage(uint16_t t)  { INA229_WriteReg16(INA229_REG_SOVL, t); }
+void INA229_SetShuntUnderVoltage(uint16_t t) { INA229_WriteReg16(INA229_REG_SUVL, t); }
+
+/**
+ * @brief  è®¾ç½®æ€»çº¿è¿‡å‹/æ¬ å‹é˜ˆå€¼
+ * @note   BOVL/BUVL å¯„å­˜å™¨åªæœ‰ä½ 15-bit æœ‰æ•ˆ, é«˜ä½ç½®é›¶
+ */
+void INA229_SetBusOverVoltage(uint16_t t)    { INA229_WriteReg16(INA229_REG_BOVL, t & 0x7FFF); }
+void INA229_SetBusUnderVoltage(uint16_t t)   { INA229_WriteReg16(INA229_REG_BUVL, t & 0x7FFF); }
+void INA229_SetTempLimit(uint16_t t)         { INA229_WriteReg16(INA229_REG_TEMP_LIMIT, t); }
+void INA229_SetPowerLimit(uint16_t t)        { INA229_WriteReg16(INA229_REG_PWR_LIMIT, t); }
+
+/*===========================================================================
+ * å™¨ä»¶ ID
+ *===========================================================================*/
+
+/**
+ * @brief  è¯»å–åˆ¶é€ å•† ID
+ * @return TI = 0x5449 (ASCII: 'T'=0x54, 'I'=0x49)
+ */
+uint16_t INA229_ReadManufacturerID(void) { return INA229_ReadReg16(INA229_REG_MANUFACTURER_ID); }
+
+/**
+ * @brief  è¯»å–å™¨ä»¶ ID
+ * @return INA229 = 0x2291
+ */
+uint16_t INA229_ReadDeviceID(void)       { return INA229_ReadReg16(INA229_REG_DEVICE_ID); }
