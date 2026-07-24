@@ -24,6 +24,7 @@
 #include "gpio.h"
 #include "spi.h"
 #include "tim.h"
+#include "dma.h"   
 #include "usart.h"
 
 /*===========================================================================
@@ -59,14 +60,11 @@
 #include <stdbool.h>
 #include <math.h>
 
-#include "arm_math.h"
-
 /*===========================================================================
  * 函数声明
  *===========================================================================*/
 
-u32         myabs(long int a);
-int         fputc(int ch, FILE *f);
-arm_status  signed_sqrt_f32(float32_t x, float32_t *result);
+u32 myabs(long int a);
+int fputc(int ch, FILE *f);
 
 #endif /* __SYSTEM_H__ */
