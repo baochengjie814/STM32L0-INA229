@@ -47,6 +47,9 @@ void Global_Init(void)
 
     /* 启动 1kHz 定时器 */
     HAL_TIM_Base_Start_IT(&htim2);
+
+    /* 启动串口通讯协议 (DMA + IDLE 接收) */
+    UART_Protocol_Init();
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)

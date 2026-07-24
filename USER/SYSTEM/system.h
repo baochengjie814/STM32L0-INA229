@@ -43,6 +43,9 @@
 /* 全局控制 */
 #include "global_control.h"
 
+/* 串口通讯协议 */
+#include "uart_protocol.h"
+
 /* 系统基础 */
 #include "sys.h"
 #include "delay.h"

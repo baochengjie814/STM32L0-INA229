@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32L031xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32L0xx_HAL_Driver/Inc;../Drivers/STM32L0xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32L0xx/Include;../Drivers/CMSIS/Include;../USER/SYSTEM;../USER/LcdControl;../USER/INA229;../USER/GlobalControl</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32L0xx_HAL_Driver/Inc;../Drivers/STM32L0xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32L0xx/Include;../Drivers/CMSIS/Include;../USER/SYSTEM;../USER/LcdControl;../USER/INA229;../USER/GlobalControl;..\USER\UART</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -1127,6 +1127,21 @@
               <FileName>global_control.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\USER\GlobalControl\global_control.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>UART</GroupName>
+          <Files>
+            <File>
+              <FileName>uart_protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\USER\UART\uart_protocol.c</FilePath>
+            </File>
+            <File>
+              <FileName>uart_protocol.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\USER\UART\uart_protocol.h</FilePath>
             </File>
           </Files>
         </Group>

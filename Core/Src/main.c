@@ -102,9 +102,12 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-		Lcd_Task();
-		
-		INA229_Task();
+    UART_Protocol_Process();
+
+    if (g_LcdTaskEnable)
+        Lcd_Task();
+
+    INA229_Task();
 //		HAL_Delay(100);
 //		printf("%d\r\n",number_count);
     /* USER CODE END WHILE */
