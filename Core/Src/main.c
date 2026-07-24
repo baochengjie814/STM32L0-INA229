@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
@@ -89,6 +90,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_SPI1_Init();
   MX_TIM2_Init();
@@ -100,7 +102,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+		Lcd_Task();
 		
+		INA229_Task();
+//		HAL_Delay(100);
+//		printf("%d\r\n",number_count);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

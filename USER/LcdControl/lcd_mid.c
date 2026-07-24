@@ -1,190 +1,125 @@
-#include "lcd_mid.h"
-#include "lcd_drv.h"
-#include "system.h"
-
-s8 YCursor = 0;
-s8 YCursorLast = 100;
-u8 InitPage1 = 0;
-u8 InitPage2 = 0;
-
-extern const unsigned char gImage_hs_logo[8052];
-
-void LCD_Clear()               
-{
-    LCD_Fill(0,0,LCD_W,LCD_H,BLACK);            //Ê∏ÖÂ±è
-}
-
-void LCD_Display_Logo()                       //ÊòæÁ§∫LOGO Âè™Âú®ËøêË°åÂºÄÂßãÊó∂ÊòæÁ§∫
-{
-    LCD_Init();                                 //Â±èÂπïÂàùÂßãÂåñ
-    LCD_ShowPicture(47,7,61,66,gImage_hs_logo); //ÊòæÁ§∫Êµ©ÁõõLOGO
-    HAL_Delay(1500);                            //Âª∂Êó∂ÊòæÁ§∫Êµ©ÁõõLOGO    
-    LCD_Fill(0,0,LCD_W,LCD_H,WHITE);            //Ê∏ÖÂ±è
-}
-
-void LCD_Display_Page1()    
-{
-
-}  
-//void LCD_Display_Page1()                      
-//{
-//    InitPage1++;
-//    if(InitPage1 == 1)                          //ÈùôÊÄÅÂÜÖÂÆπÊòæÁ§∫                   
-//    {
-//        LCD_ShowChinese(64,0,"ÁîµÂéã",WHITE,RED,16,0);    
-//        LCD_ShowString(96,0,":",LIGHTGREEN,BLACK,16,0);
-//        LCD_ShowString(152,0,"V",LIGHTGREEN,BLACK,16,0);    
-//        
-//        LCD_ShowChinese(64,16,"ÁîµÊµÅ",BLACK,YELLOW,16,0);    
-//        LCD_ShowString(96,16,":",LIGHTGREEN,BLACK,16,0);
-//        LCD_ShowString(152,16,"A",LIGHTGREEN,BLACK,16,0);    
-
-//        LCD_ShowChinese(64,32,"ÈÄüÂ∫¶",WHITE,LIGHTBLUE,16,0);    
-//        LCD_ShowString(96,32,":",LIGHTGREEN,BLACK,16,0);
-//        LCD_ShowString(152,32,"R",LIGHTGREEN,BLACK,16,0);    
-
-//        LCD_ShowChinese(64,48,"‰ΩçÁΩÆ",BLACK,GREEN,16,0);    
-//        LCD_ShowString(96,48,":",LIGHTGREEN,BLACK,16,0);
-//        LCD_ShowString(152,48,"R",LIGHTGREEN,BLACK,16,0);    
-
-//        LCD_DrawLine(0,0,60,0,WHITE);               //ÁîªÁ∫ø
-//        LCD_DrawLine(60,0,60,31,WHITE);             //ÁîªÁ∫ø
-//        LCD_DrawLine(0,0,0,30,WHITE);                 //ÁîªÁ∫ø
-//        LCD_DrawLine(0,30,60,30,WHITE);             //ÁîªÁ∫ø
-//        LCD_DrawLine(1,1,59,1,WHITE);               //ÁîªÁ∫ø
-//        LCD_DrawLine(59,1,59,30,WHITE);             //ÁîªÁ∫ø
-//        LCD_DrawLine(1,1,1,29,WHITE);                 //ÁîªÁ∫ø
-//        LCD_DrawLine(1,29,59,29,WHITE);             //ÁîªÁ∫ø
-//        
-//        LCD_ShowString(7,7,"HS FOC",WHITE,BLACK,16,0);            
-//        LCD_ShowString(4,32,"RS:",WHITE,BLACK,16,0);    
-//        LCD_ShowString(4,48,"LD:",WHITE,BLACK,16,0);    
-//        LCD_ShowString(4,64,"STATUS:",WHITE,BLACK,16,0);        
-//    }
-
-//    if(InitPage1 >= 2)                       //Âä®ÊÄÅÂÜÖÂÆπÊòæÁ§∫                   
-//    {
-//        InitPage1 = 2;    
-
-//        LCD_ShowIntNum(26,32,MC.Identify.Rs * 1000,4,ROSE_PINK,BLACK,16);    
-//        LCD_ShowIntNum(26,48,MC.Identify.Ls * 1000000,4,ROSE_PINK,BLACK,16);            
-//        LCD_ShowFloatNum1(112,0,MC.Sample.BusReal,4,ROSE_PINK,BLACK,16);    
-//        
-//        if(MC.Foc.Iq < 0)
-//        {
-//            LCD_ShowString(104,16,"-",ROSE_PINK,BLACK,16,0);
-//            LCD_ShowFloatNum1(112,16,-MC.Foc.Iq,4,ROSE_PINK,BLACK,16);        
-//        }
-//        else
-//        {
-//            LCD_ShowString(104,16," ",ROSE_PINK,BLACK,16,0);
-//            LCD_ShowFloatNum1(112,16,MC.Foc.Iq,4,ROSE_PINK,BLACK,16);        
-//        }    
-
-//        if(MC.Speed.MechanicalSpeed < 0)
-//        {
-//            LCD_ShowString(104,32,"-",ROSE_PINK,BLACK,16,0);
-//            LCD_ShowIntNum(112,32,-MC.Speed.MechanicalSpeed,5,ROSE_PINK,BLACK,16);        
-//        }
-//        else
-//        {
-//            LCD_ShowString(104,32," ",ROSE_PINK,BLACK,16,0);
-//            LCD_ShowIntNum(112,32,MC.Speed.MechanicalSpeed,5,ROSE_PINK,BLACK,16);        
-//        }        
-//        
-//        if(MC.Position.MechanicalPosRaw < 0)
-//        {
-//            LCD_ShowString(104,48,"-",ROSE_PINK,BLACK,16,0);
-//            LCD_ShowFloatNum1(112,48,-(float)MC.Position.MechanicalPosRaw/PUL_MAX,4,ROSE_PINK,BLACK,16);        
-//        }
-//        else
-//        {
-//            LCD_ShowString(104,48," ",ROSE_PINK,BLACK,16,0);
-//            LCD_ShowFloatNum1(112,48,(float)MC.Position.MechanicalPosRaw/PUL_MAX,4,ROSE_PINK,BLACK,16);        
-//        }    
-//        
-//        switch (MC.Motor.RunState)
-//        {        
-//            case ADC_CALIB:                          //ADCÊ†°ÂáÜ
-//            {
-//                LCD_ShowString(64,64,"ADC_CALIB",BLACK,WHITE,16,0);
-//            }break;    
-//            
-//            case MOTOR_IDENTIFY:                     //ÂèÇÊï∞Ëæ®ËØÜ
-//            {
-//                LCD_ShowChinese(64,64,"ÁîµÊú∫ÂèÇÊï∞Ëæ®ËØÜ",BLACK,WHITE,16,0);    
-//            }break;    
-//            
-//            case MOTOR_SENSORUSE:                    //ÊúâÊÑüÊéßÂà∂
-//            {
-//                switch(MC.Motor.RunMode)
-//                {
-//                    
-//                    case CURRENT_OPEN_LOOP:                                            //ÁîµÊµÅÂºÄÁéØ
-//                    {       
-//                        LCD_ShowChinese(64,64,"ÊúâÊÑüÁîµÊµÅÂºÄÁéØ",BLACK,WHITE,16,0);    
-//                    }break;    
-//                    
-//                    case CURRENT_CLOSE_LOOP:                                           //ÁîµÊµÅÈó≠ÁéØ
-//                    {                        
-//                        LCD_ShowChinese(64,64,"ÊúâÊÑüÁîµÊµÅÈó≠ÁéØ",BLACK,WHITE,16,0);    
-//                    }break;    
-//                    
-//                    case SPEED_CURRENT_LOOP:                                           //ÈÄüÂ∫¶Èó≠ÁéØ    
-//                    {        
-//                        LCD_ShowChinese(64,64,"ÊúâÊÑüÈÄüÂ∫¶Èó≠ÁéØ",BLACK,WHITE,16,0);    
-//                    }break;    
-//                    
-//                    case POS_SPEED_CURRENT_LOOP:                                       //‰ΩçÁΩÆÈó≠ÁéØ
-//                    {
-//                        LCD_ShowChinese(64,64,"ÊúâÊÑü‰ΩçÁΩÆÈó≠ÁéØ",BLACK,WHITE,16,0);
-//                    }break;    
-//                }               
-//            }break;    
-
-//            case MOTOR_SENSORLESS:                                                 //Êó†ÊÑüÊéßÂà∂
-//            {
-//                switch(MC.Motor.RunMode)
-//                {
-//                    case STRONG_DRAG_SMO_SPEED_CURRENT_LOOP:                                                
-//                    {    
-//                        LCD_ShowChinese(64,64,"Êó†ÊÑüÂº∫ÊãñÊªëËÜú",BLACK,WHITE,16,0);                        
-//                    }break;                
-//                    
-//                    case HFI_SMO_SPEED_CURRENT_CLOSE:                                      
-//                    {       
-//                        LCD_ShowChinese(64,64,"È´òÈ¢ëÊ≥®ÂÖ•ÊªëËÜú",BLACK,WHITE,16,0);    
-//                    }break;    
-
-//                } 
-//            }break;                        
-//        }            
-//    }            
-//}
-
-//void LCD_Display_Page2()
-//{    
-//    InitPage2++;
-//    if(InitPage2 == 1)                         //ÈùôÊÄÅÂÜÖÂÆπÊòæÁ§∫                   
-//    {
-//        LCD_ShowChinese(6,8,  "Ê®°",WHITE,BLACK,16,0);    
-//        LCD_ShowChinese(6,24, "Âºè",WHITE,BLACK,16,0);    
-//        LCD_ShowChinese(6,40, "Âàá",WHITE,BLACK,16,0);    
-//        LCD_ShowChinese(6,56, "Êç¢",WHITE,BLACK,16,0);    
-//        
-//        LCD_ShowChinese(64,0, "ÊúâÊÑüÁîµÊµÅÈó≠ÁéØ",ROSE_PINK,BLACK,16,0);                
-//        LCD_ShowChinese(64,16,"ÊúâÊÑüÈÄüÂ∫¶Èó≠ÁéØ",ROSE_PINK,BLACK,16,0);    
-//        LCD_ShowChinese(64,32,"ÊúâÊÑü‰ΩçÁΩÆÈó≠ÁéØ",ROSE_PINK,BLACK,16,0);    
-//        LCD_ShowChinese(64,48,"Êó†ÊÑüÂº∫ÊãñÊªëËÜú",ROSE_PINK,BLACK,16,0);
-//        LCD_ShowChinese(64,64,"È´òÈ¢ëÊ≥®ÂÖ•ÊªëËÜú",ROSE_PINK,BLACK,16,0);
-//    }
-
-//    if(InitPage1 >= 2)                       //Âä®ÊÄÅÂÜÖÂÆπÊòæÁ§∫                   
-//    {
-//        InitPage1 = 2;    
-//      LCD_ShowString(30,YCursor,"-->",WHITE,BLACK,16,0);    
-//        LCD_ShowString(30,YCursorLast,"   ",WHITE,BLACK,16,0);                
-//    }
-//}
-
-  
+/**
+  ******************************************************************************
+  * Œƒº˛√˚≥Ã: lcd_mid.c
+  * ◊˜    ’ﬂ:
+  * ∞Ê    ±æ: V1.0
+  * ±‡–¥»’∆⁄:
+  * π¶    ƒ‹: LCD “≥√Êœ‘ æ (Page1: INA229 ≤Ó¡øÀ¢–¬)
+  ******************************************************************************
+  */
+/* Õ∑Œƒº˛ ---------------------------------------------------------------*/
+#include "lcd_mid.h"
+#include "lcd_drv.h"
+#include "system.h"
+#include "INA229_Task.h"
+#include <math.h>
+
+static u8  InitPage1 = 0;
+
+#define FONT_SIZE  24
+#define VAL_X      72
+#define ROW1_Y     0
+#define ROW2_Y     30
+#define ROW3_Y     60
+#define ROW4_Y     90
+
+/* ≤Ó¡øÀ¢–¬„–÷µ (LSD: œ‘ æ◊Ó–°Œª±‰ªØ) */
+#define THR_V   0.001f   /* 1mV / 1mV  */
+#define THR_I   0.001f   /* 1mA / 1mA  */
+#define THR_P   0.001f   /* 1mW / 1mW  */
+#define THR_T   0.05f    /* 0.05°„C      */
+
+/* …œ“ª÷°ª∫¥Ê */
+static float _last_v = -999.0f, _last_i = -999.0f, _last_p = -999.0f, _last_t = -999.0f;
+static u8    _last_unit_v = 0, _last_unit_i = 0, _last_unit_p = 0;
+
+/**
+ * ◊‘∂Øµ•Œª«–ªª + ≤Ó¡ø≈–∂œ
+ * ∑µªÿ 1=“—À¢–¬, 0=Ã¯π˝(÷µŒ¥±‰)
+ */
+static int _ShowAutoUnit(u16 x, u16 y, float raw_val, float threshold,
+                         const char *ub, const char *us,
+                         float *last_val, u8 *last_unit,
+                         u16 fc, u16 bc, u8 sizey)
+{
+    const char *unit;
+    float display_val;
+
+    /* ◊‘∂Øµ•Œª«–ªª */
+    if (raw_val < 1.0f && raw_val > -1.0f) {
+        display_val = raw_val * 1000.0f;
+        unit = us;
+        if (*last_unit != 1) { *last_unit = 1; *last_val = -999.0f; }  /* µ•Œª±‰¡À, «ø÷∆À¢–¬ */
+    } else {
+        display_val = raw_val;
+        unit = ub;
+        if (*last_unit != 0) { *last_unit = 0; *last_val = -999.0f; }
+    }
+
+    /* ≤Ó¡ø≈–∂œ: ÷µ”Î…œ÷°œ‡Õ¨‘ÚÃ¯π˝ */
+    if (fabsf(display_val - *last_val) < threshold)
+        return 0;
+
+    *last_val = display_val;
+
+    /*  ˝÷µ: ◊Û∂‘∆Î, 8◊÷∑˚øÌ */
+    char buf[10];
+    snprintf(buf, sizeof(buf), "%.3f", display_val);
+    LCD_ShowPrintf(x,      y, fc, bc, sizey, 0, "%-8s", buf);
+
+    /* µ•Œª: ◊Û∂‘∆Î, 3◊÷∑˚øÌ */
+    LCD_ShowPrintf(x + 96, y, fc, bc, sizey, 0, "%-3s", unit);
+
+    return 1;
+}
+
+void LCD_Display_Page1(void)
+{
+    InitPage1++;
+    if (InitPage1 == 1)
+    {
+        /* æ≤Ã¨±Í«© */
+        LCD_ShowString(0, ROW1_Y, (u8 *)"VBUS", WHITE, RED,    FONT_SIZE, 0);
+        LCD_ShowString(0, ROW2_Y, (u8 *)"CURR", WHITE, YELLOW, FONT_SIZE, 0);
+        LCD_ShowString(0, ROW3_Y, (u8 *)"PWR",  WHITE, LIGHTBLUE, FONT_SIZE, 0);
+        LCD_ShowString(0, ROW4_Y, (u8 *)"TEMP", WHITE, GREEN,  FONT_SIZE, 0);
+    }
+
+    if (InitPage1 >= 2)
+    {
+        InitPage1 = 2;
+
+        /* VBUS: <1V °˙ mV */
+        _ShowAutoUnit(VAL_X, ROW1_Y, INA229_Data.vbus, THR_V, "V", "mV",
+                      &_last_v, &_last_unit_v, ROSE_PINK, BLACK, FONT_SIZE);
+
+        /* CURR: <1A °˙ mA */
+        _ShowAutoUnit(VAL_X, ROW2_Y, INA229_Data.current, THR_I, "A", "mA",
+                      &_last_i, &_last_unit_i, ROSE_PINK, BLACK, FONT_SIZE);
+
+        /* PWR: <1W °˙ mW */
+        _ShowAutoUnit(VAL_X, ROW3_Y, INA229_Data.power, THR_P, "W", "mW",
+                      &_last_p, &_last_unit_p, ROSE_PINK, BLACK, FONT_SIZE);
+
+        /* TEMP: πÃ∂® °„C, ≤Ó¡øÀ¢–¬ */
+        if (InitPage1 == 2 || fabsf(INA229_Data.temperature - _last_t) >= THR_T) {
+            _last_t = INA229_Data.temperature;
+            LCD_ShowPrintf(VAL_X, ROW4_Y, ROSE_PINK, BLACK, FONT_SIZE, 0,
+                           "%.1f C", INA229_Data.temperature);
+        }
+    }
+}
+
+void LCD_Display_Page2(void) {}
+void LCD_Clear(void) { LCD_Fill(0, 0, LCD_W, LCD_H, BLACK); }
+
+void LCD_Display_Logo(void)
+{
+#if 0  /* Logo Ω˚”√, Ω⁄ ° Flash */
+    extern const unsigned char gImage_hs_logo[8052];
+    LCD_Init();
+    LCD_ShowPicture(89, 34, 61, 66, gImage_hs_logo);
+    HAL_Delay(1500);
+#endif
+    LCD_Fill(0, 0, LCD_W, LCD_H, BLACK);
+}
