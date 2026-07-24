@@ -884,24 +884,9 @@ void LCD_ShowChar(u16 x, u16 y, u8 num, u16 fc, u16 bc, u8 sizey, u8 mode) {
 
   for (i = 0; i < TypefaceNum; i++) {
 
-    if (sizey == 12)
-
-      temp = ascii_1206[num][i];
-
-    else if (sizey == 16)
-
-      temp = ascii_1608[num][i];
-
-    else if (sizey == 24)
-
+    if (sizey == 24)
       temp = ascii_2412[num][i];
-
-    else if (sizey == 32)
-
-      temp = ascii_3216[num][i];
-
     else
-
       return;
 
     for (t = 0; t < 8; t++) {
