@@ -54,7 +54,7 @@ void Global_Init(void)
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    if(htim->Instance == htim2.Instance)                        //1KHZ 1ms
+    if(htim->Instance == htim2.Instance)                        //10KHZ  100US
     {
         LcdTaskTim++;
 				number_count++;

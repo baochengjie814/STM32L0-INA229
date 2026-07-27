@@ -32,7 +32,7 @@ static uint8_t  rx_line[UART_RX_BUF_SIZE];       /* 完整一行的副本 */
 static volatile bool rx_done = false;               /* 一帧接收完成标志 */
 
 /* 当前 INA229 设定 (上电默认值) */
-INA229_ConvTime_t  g_CtSetting  = INA229_CT_1052US;
+INA229_ConvTime_t  g_CtSetting  = INA229_CT_2074US;
 INA229_AvgCount_t  g_AvgSetting = INA229_AVG_16;
 
 /*===========================================================================

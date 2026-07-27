@@ -53,7 +53,7 @@ extern "C" {
 
 #define SOFT_SPI_CPOL               0    /* 时钟极性: 0=空闲低 */
 #define SOFT_SPI_CPHA               1    /* 时钟相位: 1=第二个边沿采样 */
-#define SOFT_SPI_DELAY_US           2    /* 位间延时 (μs), 越小越快 */
+#define SOFT_SPI_DELAY_US           0    /* 位间延时 0μs (测试极限) */
 
 /*===========================================================================
  * API

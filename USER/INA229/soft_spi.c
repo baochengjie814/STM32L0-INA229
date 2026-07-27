@@ -26,7 +26,6 @@
 #define MOSI_L()  HAL_GPIO_WritePin(SOFT_SPI_MOSI_PORT, SOFT_SPI_MOSI_PIN, GPIO_PIN_RESET)
 #define MISO_R()  HAL_GPIO_ReadPin(SOFT_SPI_MISO_PORT, SOFT_SPI_MISO_PIN)
 
-/* SCK 电平: CPOL=0 时 H=高/L=低, CPOL=1 时反转 */
 #if SOFT_SPI_CPOL == 0
   #define SCLK_H()  HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_SET)
   #define SCLK_L()  HAL_GPIO_WritePin(SOFT_SPI_SCLK_PORT, SOFT_SPI_SCLK_PIN, GPIO_PIN_RESET)
@@ -89,7 +88,6 @@ void Soft_SPI_Init(void)
     SCLK_L();
     MOSI_L();
     Soft_SPI_CS_High();
-    Soft_SPI_DelayUs(10);
 }
 
 /*===========================================================================
@@ -99,69 +97,52 @@ void Soft_SPI_Init(void)
 void Soft_SPI_CS_Low(void)
 {
     HAL_GPIO_WritePin(SOFT_SPI_CS_PORT, SOFT_SPI_CS_PIN, GPIO_PIN_RESET);
-    Soft_SPI_DelayUs(1);
 }
 
 void Soft_SPI_CS_High(void)
 {
-    Soft_SPI_DelayUs(1);
     HAL_GPIO_WritePin(SOFT_SPI_CS_PORT, SOFT_SPI_CS_PIN, GPIO_PIN_SET);
-    Soft_SPI_DelayUs(1);
 }
 
 /*===========================================================================
  * SPI 传输
  *===========================================================================*/
 
-/**
- * 单字节 SPI 全双工传输 (MSB first)
- *
- * 每字节 8 个时钟周期, 每个周期:
- *   1. MOSI 输出当前最高位
- *   2. 产生移位边沿 (从设备锁存 MOSI)
- *   3. 延时 → 读 MISO → 产生采样边沿
- */
-uint8_t Soft_SPI_Transfer(uint8_t tx)
-{
-    uint8_t rx = 0;
-    uint8_t i;
+/* 单次位传输宏 (Mode 1: SCK↑移位 → 读MISO → SCK↓) */
+#define SPI_BIT(tx_bit, rx_var)  do {           \
+    if (tx_bit) MOSI_H(); else MOSI_L();         \
+    SCLK_H();                                    \
+    rx_var <<= 1;                                \
+    if (MISO_R()) rx_var |= 0x01;                \
+    SCLK_L();                                    \
+} while(0)
 
-    for (i = 0; i < 8; i++)
-    {
-        /* 输出当前最高位 */
-        if (tx & 0x80) MOSI_H(); else MOSI_L();
-        tx <<= 1;
-
-#if READ_ON_RISING
-        /* 上升沿采样 (Mode 0/3): 先采样再移位 */
-        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
-        EDGE_SAMPLE();
-        rx <<= 1;
-        if (MISO_R()) rx |= 0x01;
-        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
-        EDGE_SHIFT();
-#else
-        /* 下降沿采样 (Mode 1/2, INA229): 先移位再采样 */
-        EDGE_SHIFT();
-        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
-        rx <<= 1;
-        if (MISO_R()) rx |= 0x01;
-        EDGE_SAMPLE();
-#endif
-        Soft_SPI_DelayUs(SOFT_SPI_DELAY_US);
-    }
-    return rx;
-}
+/* 单次位传输宏 (Mode 1: SCK↑移位 → 读MISO → SCK↓) */
+#define SPI_BIT(tx_bit, rx_var)  do {           \
+    if (tx_bit) MOSI_H(); else MOSI_L();         \
+    SCLK_H();                                    \
+    rx_var <<= 1;                                \
+    if (MISO_R()) rx_var |= 0x01;                \
+    SCLK_L();                                    \
+} while(0)
 
 /**
- * 多字节 SPI 批量传输
- * tx=NULL → 发送 0x00 (仅接收), rx=NULL → 丢弃接收数据
+ * 多字节 SPI 批量传输 (内联展开, 无反调)
  */
 void Soft_SPI_TransferBuf(const uint8_t *tx, uint8_t *rx, uint16_t len)
 {
     uint16_t i;
     for (i = 0; i < len; i++) {
-        uint8_t r = Soft_SPI_Transfer(tx ? tx[i] : 0x00);
+        uint8_t dat = tx ? tx[i] : 0x00;
+        uint8_t r   = 0;
+        SPI_BIT(dat & 0x80, r); dat <<= 1;
+        SPI_BIT(dat & 0x80, r); dat <<= 1;
+        SPI_BIT(dat & 0x80, r); dat <<= 1;
+        SPI_BIT(dat & 0x80, r); dat <<= 1;
+        SPI_BIT(dat & 0x80, r); dat <<= 1;
+        SPI_BIT(dat & 0x80, r); dat <<= 1;
+        SPI_BIT(dat & 0x80, r); dat <<= 1;
+        SPI_BIT(dat & 0x80, r);
         if (rx) rx[i] = r;
     }
 }

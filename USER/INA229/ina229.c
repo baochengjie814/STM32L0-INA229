@@ -58,6 +58,9 @@ static inline uint8_t _BuildCmd(uint8_t addr, uint8_t rw)
     return (uint8_t)(((addr & 0x3F) << 2) | (rw & 0x01));
 }
 
+/* CURRENT 寄存器 LSB, Init 时计算 */
+static float _current_lsb = 0.0f;
+
 /**
  * 24-bit 符号扩展为 32-bit (VSHUNT/CURRENT 等有符号寄存器)
  * 例: raw24=0x800000 (bit23=1) → 0xFF800000 (int32_t = -8388608)
@@ -102,9 +105,9 @@ bool INA229_Init(float rshunt_ohm, float i_max_a)
     /* 4. 默认 ADC 配置 */
     INA229_WriteReg16(INA229_REG_ADC_CONFIG,
         INA229_ADC_MODE_CONT_ALL |
-        (INA229_CT_1052US << INA229_ADC_VBUSCT_Pos) |
-        (INA229_CT_1052US << INA229_ADC_VSHCT_Pos) |
-        (INA229_CT_1052US << INA229_ADC_VTCT_Pos) |
+        (INA229_CT_2074US << INA229_ADC_VBUSCT_Pos) |
+        (INA229_CT_2074US << INA229_ADC_VSHCT_Pos) |
+        (INA229_CT_2074US << INA229_ADC_VTCT_Pos) |
         INA229_AVG_16);
 
     /* 5. 计算并写入 SHUNT_CAL
@@ -115,6 +118,9 @@ bool INA229_Init(float rshunt_ohm, float i_max_a)
     if (scal > INA229_SHUNT_CAL_MAX_FLOAT) scal /= INA229_SHUNT_CAL_DIVISOR;
     if (scal > INA229_SHUNT_CAL_MAX_FLOAT) scal = INA229_SHUNT_CAL_MAX_FLOAT;
     INA229_SetShuntCal((uint16_t)(scal + 0.5f));
+
+    /* 保存 CURRENT LSB = Imax / 2^19 */
+    _current_lsb = i_max_a / 524288.0f;
 
     return true;
 }
@@ -254,7 +260,7 @@ float INA229_ReadCurrent(uint16_t shunt_cal_value)
 {
     int32_t val = _SignExtend24(INA229_ReadReg24(INA229_REG_CURRENT)) >> INA229_24BIT_DATA_SHIFT;
     (void)shunt_cal_value;
-    return (float)val;
+    return (float)val * _current_lsb;
 }
 
 /**

@@ -74,7 +74,7 @@ void Lcd_Task(void)
 
         {
 
-            if(LcdTaskTim>=100)        //100ms
+            if(LcdTaskTim>=1000)        //100ms=10Hz (TIM2=10kHz)
 
             {
 
